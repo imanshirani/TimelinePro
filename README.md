@@ -66,11 +66,11 @@ Your feedback is invaluable in making TimelinePro better! If you find a bug or h
 
 1.  **Download:** Download the latest release from the repository.
 2.  **Unpack:** Unzip the contents to a safe location.
-3.  **Install:** Simply drag the `TimelinePro_Launcher.ms` file from the folder into your 3ds Max viewport.
+3.  **Run Timeline:** 
 4.  **Toolbar (Optional but Recommended):**
-    * Go to `Customize` > `Customize User Interface`.
-    * In the `Toolbars` tab, find the Category `TimelinePro`.
-    * You can drag the `TimelinePro` action to any toolbar to create a quick-access button.
+    * Go to `Script` > `Run Script`.
+    * Select `launch_timeline.py` File, click `Open`.
+    * Now, you can see `TimelinePro` under Old Timeline
 
 ***
 
