@@ -67,7 +67,7 @@ Your feedback is invaluable in making TimelinePro better! If you find a bug or h
 1.  **Download:** Download the latest release from the repository.
 2.  **Unpack:** Unzip the contents to a safe location.
 3.  **Run Timeline:** 
-4.  **Toolbar (Optional but Recommended):**
+    **Toolbar (Optional but Recommended):**
     * Go to `Script` > `Run Script`.
     * Select `launch_timeline.py` File, click `Open`.
     * Now, you can see `TimelinePro` under Old Timeline
@@ -79,7 +79,7 @@ Your feedback is invaluable in making TimelinePro better! If you find a bug or h
 Here is a basic cookbook to get you started with TimelinePro.
 
 #### 1. Launch & Add Your First Clip
-* Open TimelinePro by clicking its toolbar button or by running the `TimelinePro_Launcher.ms` script.
+* Open TimelinePro by clicking its toolbar button or by running the `launch_timeline.py` script.
 * Select an animated object in your 3ds Max scene.
 * In the **Track List** view, click the **+ Add** button. TimelinePro will capture its animation and create your first clip.
 
