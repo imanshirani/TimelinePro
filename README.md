@@ -70,7 +70,7 @@ Your feedback is invaluable in making TimelinePro better! If you find a bug or h
     **Toolbar (Optional but Recommended):**
     * Go to `Script` > `Run Script`.
     * Select `launch_timeline.py` File, click `Open`.
-    * Now, you can see `TimelinePro` under Old Timeline
+    * Now, you can see `TimelinePro` under the original Timeline
 
 ***
 
