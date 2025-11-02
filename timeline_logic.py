@@ -151,7 +151,7 @@ class TimelineLogic:
 
     def _build_hierarchy_data(self, node, anim_range, start_frame_offset):
         """
-        New and complete version: Recursively reads the animation structure.
+        - Recursively reads the animation structure.
         - Local animation: Extracts keys from all controllers.
         - World animation: Samples the transformation (position, rotation, scale) frame by frame.
         """
@@ -238,7 +238,7 @@ class TimelineLogic:
     
     def _export_clip_to_file(self, item):
         """
-        New version: This function saves the selected object and all its children with all animation details
+        This function saves the selected object and all its children with all animation details
         (Local and World) in a .clip file.
         """
         handle = item.data(0, self.ui.PARENT_OBJ_ROLE)
@@ -301,7 +301,7 @@ class TimelineLogic:
     #============================= 
     def _apply_animation_data_to_node(self, node, animation_data, start_frame_offset=0):
         """
-        Rewritten version: Uses frame-by-frame sampling and baking for perfect accuracy.
+        Uses frame-by-frame sampling and baking for perfect accuracy.
         """
         all_tracks = animation_data.get("tracks", {})
         if not all_tracks:
@@ -569,10 +569,10 @@ class TimelineLogic:
     #=============================
     def _capture_animation_data(self, max_object, clip_start_frame):
         """
-        Final version: reads the animation, normalizes the keys (from zero)
+        reads the animation, normalizes the keys (from zero)
         and also saves the technical ID of the controllers.
         """
-        print(f"\n--- Capturing Animation for: '{max_object.name}' (Version 2.0) ---")
+        print(f"\n--- Capturing Animation for: '{max_object.name}' (Version 0.0.1) ---")
         animation_data = {"tracks": {}}
         all_keys = []
 
@@ -1083,7 +1083,6 @@ class TimelineLogic:
     def _find_subanim_by_path(self, start_node, path_str):
         """
         Finds a SubAnim based on its string path.
-        This version is case-insensitive and space/_ is very stable.
         """
         current_obj = start_node
         path_parts = path_str.split('/')
