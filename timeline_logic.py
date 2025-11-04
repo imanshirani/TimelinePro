@@ -3,7 +3,10 @@ import os
 import json
 import uuid
 import datetime
-from PySide6 import QtWidgets, QtCore, QtGui
+try:
+    from PySide2 import QtWidgets, QtCore
+except ImportError:
+    from PySide6 import QtWidgets, QtCore
 
 rt = pymxs.runtime
 
@@ -1493,4 +1496,5 @@ class TimelineLogic:
 
     #=============================
     # END Crossfade Logic
+
     #=============================
