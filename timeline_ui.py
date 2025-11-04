@@ -10,7 +10,10 @@ import configparser
 import math
 import ctypes
 import ctypes.wintypes
-from PySide6 import QtWidgets, QtCore, QtGui
+try:
+    from PySide2 import QtWidgets, QtCore, QtGui
+except ImportError:
+    from PySide6 import QtWidgets, QtCore, QtGui
 import pymxs
 from custom_widgets import XYZScrubber, QuatScrubber, ValueScrubber
 from timeline_logic import TimelineLogic
@@ -3597,4 +3600,5 @@ class MotionMixerPanel(QtWidgets.QWidget):
     
 # =======================================
 # # === END: MotionMixerPanel         ===
+
 # =======================================
