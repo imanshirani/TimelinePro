@@ -8,7 +8,10 @@
 # ====================================================================
 import sys
 import os
-from PySide6 import QtWidgets, QtCore
+try:
+    from PySide2 import QtWidgets, QtCore
+except ImportError:
+    from PySide6 import QtWidgets, QtCore
 import importlib
 import pymxs 
 
@@ -94,4 +97,5 @@ def launch_timeline():
     print("✅ Timeline Pro launched successfully as a dockable toolbar!")
 
 # --- Run the main function ---
+
 launch_timeline()
