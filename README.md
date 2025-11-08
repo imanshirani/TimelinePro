@@ -11,6 +11,8 @@ for Autodesk 3ds Max 2025+
 ![screenshot](TIMELINPRO.png)
 ***
 
+📜 [View Changelog](CHANGELOG.md)
+
 ### ⚠️ Beta Disclaimer
 
 Please note that **TimelinePro** is currently in a **beta** phase and is under active development. This means it may contain bugs, unexpected behavior, or missing features.
