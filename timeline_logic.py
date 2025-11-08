@@ -194,14 +194,17 @@ class TimelineLogic:
         print(f"  -> Sampling WORLD Transform from frame {anim_range[0]} to {anim_range[1]}...")
         
         
+        
         rt.disableSceneRedraw()
         try:
-            original_time = self.rt.currentTime
-            try:
-                for frame in range(anim_range[0], anim_range[1] + 1):
-                    self.rt.currentTime = frame
+            for frame in range(anim_range[0], anim_range[1] + 1):
+                
+                with pymxs.attime(frame):
                     
-                    transform = node.transform
+                    
+                    rt.redrawViews(False) 
+                    
+                    transform = node.transform 
                     pos = transform.translation
                     rot = transform.rotationpart
                     scl = transform.scalepart
@@ -211,13 +214,12 @@ class TimelineLogic:
                         "rotation_quat": [rot.x, rot.y, rot.z, rot.w],
                         "scale": [scl.x, scl.y, scl.z]
                     }
-            finally:
-                
-                self.rt.currentTime = original_time
-        finally:
+                    
             
+        finally:
             rt.enableSceneRedraw()
             rt.redrawViews() 
+        
 
         
         this_node_data = {
@@ -267,7 +269,7 @@ class TimelineLogic:
         
         final_data_to_save = {
             "metadata": { 
-                "version": "0.0.1 Timeline Pro -Export Clip File", 
+                "version": "0.0.2 Timeline Pro -Export Clip File", 
                 "export_date": datetime.datetime.now().isoformat(),
                 "source_root_object": root_node.name
             },
@@ -567,12 +569,12 @@ class TimelineLogic:
     #=============================
     # Capture animation data
     #=============================
-    def _capture_animation_data(self, max_object, clip_start_frame):
+    def _capture_animation_data(self, max_object):
         """
-        reads the animation, normalizes the keys (from zero)
-        and also saves the technical ID of the controllers.
+        Reads the animation. If the key exists, it sets the time range accordingly.
+        If not, it uses the timeline cursor.
         """
-        print(f"\n--- Capturing Animation for: '{max_object.name}' (Version 0.0.1) ---")
+        print(f"\n--- Capturing Animation for: '{max_object.name}' (Version 0.0.2) ---")
         animation_data = {"tracks": {}}
         all_keys = []
 
@@ -592,16 +594,26 @@ class TimelineLogic:
         recursive_prescan(max_object)
         print(f"  -> Prescan complete. Found {len(all_keys)} total keyframes.")
 
+        start_frame_offset = 0
+        final_start_frame = 0
+        final_end_frame = 0
+
+        
         if not all_keys:
-            print("  -> No keys found. Creating clip until end of animation range.")
-            end_frame = int(rt.animationRange.end)
-            return animation_data, end_frame
+            
+            print("  -> No keys found. Creating clip from current time.")
+            start_frame_offset = int(rt.currentTime) 
+            final_start_frame = int(rt.currentTime)
+            final_end_frame = int(rt.animationRange.end)
         else:
             
-            min_key_time = min(key.time for key in all_keys)
-            max_key_time = max(key.time for key in all_keys)
-            duration = int(max_key_time - min_key_time)
-            print(f"  -> Key range found: Frame {min_key_time} to {max_key_time} (Duration: {duration})")
+            min_key_time = float(min(key.time for key in all_keys))
+            max_key_time = float(max(key.time for key in all_keys))
+            print(f"  -> Key range found: Frame {min_key_time} to {max_key_time}")
+            
+            start_frame_offset = min_key_time 
+            final_start_frame = int(min_key_time)
+            final_end_frame = int(max_key_time)
 
             
             def recursive_capture(parent_obj, path_prefix=""): 
@@ -616,18 +628,18 @@ class TimelineLogic:
                                 if rt.isProperty(key, prop):
                                     val = getattr(key, prop)
                                     if prop == 'time':
-                                        key_data[prop] = float(val - min_key_time) 
+                                        key_data[prop] = float(val) - start_frame_offset 
                                     else:
-                                        
                                         prop_class = rt.classOf(val)
-                                        if prop_class in [rt.Point3, rt.Quat, rt.Point4, rt.Color, rt.FRGBA]: key_data[prop] = [float(v) for v in val]
+                                        prop_class_str = str(prop_class)
+                                        if prop_class_str in ['Point3', 'Quat', 'Point4', 'Color', 'RGBA', 'FRGBA', 'EulerAngles']: 
+                                            key_data[prop] = [float(v) for v in val]
                                         elif prop_class == rt.Name: key_data[prop] = str(val)
                                         else: key_data[prop] = float(val) if isinstance(val, (int, float)) else str(val)
                             
                             keys_list.append(key_data) 
                         
                         if keys_list:
-                            
                             controller_info = {
                                 "class_of": str(rt.classOf(controller)),
                                 "class_id": str(rt.classIDof(controller)),
@@ -642,18 +654,15 @@ class TimelineLogic:
                     try:
                         for name in rt.getSubAnimNames(parent_obj):
                             sub_anim = rt.getSubAnim(parent_obj, name)
-                            
                             current_path = f"{path_prefix}/{name}" if path_prefix else str(name)
                             recursive_capture(sub_anim, current_path)
                     except Exception: pass
             
-            
             recursive_capture(max_object, "") 
-            
 
-            final_end_frame = clip_start_frame + duration
-            print(f"  -> SUCCESS: Clip created from {clip_start_frame} to {final_end_frame}")
-            return animation_data, final_end_frame
+        print(f"  -> SUCCESS: Clip created from {final_start_frame} to {final_end_frame}")
+        
+        return animation_data, final_start_frame, final_end_frame
 
     #=============================
     # END Capture animation data
@@ -696,10 +705,13 @@ class TimelineLogic:
                 try:
                     for obj in objects_to_add:
                         
-                        start_frame = int(rt.currentTime)
-                        animation_data, end_frame = self._capture_animation_data(obj, start_frame)
+                        
+                        animation_data, start_frame, end_frame = self._capture_animation_data(obj)
                                                 
+                        
                         obj_item = self.ui._create_clip_item(obj, obj.name, start_frame, end_frame, animation_data)
+                        
+                        
                         self.ui.track_list_panel.track_tree.addTopLevelItem(obj_item)
                                                 
                         self.ui.add_tracks_recursively(obj_item, obj)
@@ -916,15 +928,99 @@ class TimelineLogic:
         return result
     
     
+    def _clear_keys_in_range(self, node, start_frame, end_frame):
+        """Recursively clears all keys in a specified frame range for a node and its hierarchy."""
+        if not node:
+            return
+
+        def recursive_clear(sub_anim):
+            if not sub_anim: return
+            
+            controller = None
+            if rt.isController(sub_anim):
+                controller = sub_anim
+            elif hasattr(sub_anim, 'controller') and sub_anim.controller:
+                controller = sub_anim.controller
+
+            if controller and rt.isProperty(controller, "keys") and controller.keys.count > 0:
+                try:
+                    
+                    keys_to_delete_indices = []
+                    for i in range(controller.keys.count):
+                        key_time = controller.keys[i].time
+                        if start_frame <= key_time <= end_frame:
+                            
+                            keys_to_delete_indices.append(i + 1)
+                    
+                    if keys_to_delete_indices:
+                        
+                        for idx in sorted(keys_to_delete_indices, reverse=True):
+                            rt.deleteItem(controller.keys, idx)
+                        
+                except Exception as e:
+                    print(f"  -> Warning: Could not clear keys from {controller}: {e}")
+
+            if hasattr(sub_anim, 'numSubs') and sub_anim.numSubs > 0:
+                try:
+                    for name in rt.getSubAnimNames(sub_anim):
+                        recursive_clear(rt.getSubAnim(sub_anim, name))
+                except Exception: pass
+        
+        print(f"Clearing keys between {start_frame}-{end_frame} for '{node.name}'...")
+        recursive_clear(node) 
+        if hasattr(node, 'baseObject'):
+             recursive_clear(node.baseObject) 
+        for mod in node.modifiers:
+             recursive_clear(mod)
+
+
+    def _get_clip_world_transform_at_local_time(self, clip_item, local_time, scene_root_node):
+        """
+        A new helper function that returns the world transform values ​​of a clip at a specific local time (e.g. frame 0).
+        This is crucial for calculating Relative offsets.
+        """
+        transforms = {}
+        clip_data = clip_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not clip_data:
+            return transforms
+
+        json_root = clip_data.get('animation_data')
+        if not json_root:
+            return transforms
+            
+        clip_start_file = int(clip_data['properties'].get('start_frame_absolute', 0))
+        json_frame_key = str(clip_start_file + local_time)
+
+        def recursive_find(json_node, scene_node):
+            if not json_node or not scene_node: return
+            
+            handle = scene_node.handle
+            world_data = json_node.get('world_animation', {}).get(json_frame_key)
+            
+            if world_data:
+                pos = self.rt.Point3(*world_data['position'])
+                rot = self.rt.Quat(*world_data['rotation_quat'])
+                scl = self.rt.Point3(*world_data['scale'])
+                transforms[handle] = {'pos': pos, 'rot': rot, 'scl': scl}
+
+            for child_idx in range(min(len(json_node.get('children', [])), len(scene_node.children))):
+                recursive_find(json_node['children'][child_idx], scene_node.children[child_idx])
+
+        recursive_find(json_root, scene_root_node)
+        return transforms
+
     # =================================================================
     # === Bake MIXER                                                ===
     # =================================================================
     
+    
+    # =================================================================
+    # === Bake MIXER (Relative) ===
+    # =================================================================
+    
     def bake_mixer_to_scene(self):
-        """
-        Final and modified version based on the user's original code.
-        This version implements the fade logic with correct math calculations and uses the user's original method for applying transform.
-        """
+        print ("\n=== START OF BAKE (v12 + Relative Mode Support) ===")
+        
         if self.rt.selection.count != 1:
             QtWidgets.QMessageBox.warning(self.ui, "Selection Error", "Please select the single ROOT object to bake onto.")
             return
@@ -938,12 +1034,46 @@ class TimelineLogic:
             for j in range(track_item.childCount()):
                 clip_item = track_item.child(j)
                 try:
-                    min_frame = min(min_frame, int(clip_item.text(2)))
-                    max_frame = max(max_frame, int(clip_item.text(3)))
+                    min_frame = min(min_frame, int(clip_item.text(3)))
+                    max_frame = max(max_frame, int(clip_item.text(4)))
                 except (ValueError, IndexError): continue
         if max_frame == float('-inf'): return
         
+        print(f"Bake range determined: {min_frame} to {max_frame}")
         self.rt.execute("holdMaxFile()")
+
+        try:
+            all_nodes_in_bake = {} 
+            
+            def find_all_scene_nodes(json_node, scene_node):
+                if not json_node or not scene_node: return
+                all_nodes_in_bake[scene_node.handle] = scene_node
+                for child_idx in range(min(len(json_node.get('children', [])), len(scene_node.children))):
+                    find_all_scene_nodes(json_node['children'][child_idx], scene_node.children[child_idx])
+
+            for i in range(mixer_tree.topLevelItemCount()):
+                track_item = mixer_tree.topLevelItem(i)
+                for j in range(track_item.childCount()):
+                    clip_item = track_item.child(j)
+                    clip_data = clip_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                    if clip_data:
+                        json_root = clip_data.get('animation_data')
+                        find_all_scene_nodes(json_root, scene_root_node)
+            
+            for node in all_nodes_in_bake.values():
+                self._clear_keys_in_range(node, min_frame, max_frame)
+            
+            print(f"Cleared existing keys for {len(all_nodes_in_bake)} nodes.")
+
+        except Exception as e:
+            print(f"CRITICAL ERROR during key clearing: {e}")
+            self.rt.execute("fetchMaxFile()") 
+            return
+
+        # --- [START] Relative ---
+        track_relative_offsets = {} # { track_index: { handle: { 'end_pos':..., 'end_rot':..., 'start_pos':..., 'start_rot':... } } }
+        # --- [END] ---
+
         with pymxs.animate(True):
             self.rt.disableSceneRedraw()
             progress_dialog = None
@@ -958,6 +1088,8 @@ class TimelineLogic:
                     QtWidgets.QApplication.processEvents()
                     if progress_dialog.wasCanceled(): raise StopIteration("Bake Canceled")
 
+                    print(f"\n--- [Bake Frame {t}] ---")
+
                     with pymxs.attime(t):
                         final_world_transforms = {}
                         final_local_values = {}
@@ -969,38 +1101,128 @@ class TimelineLogic:
                             if blend_mode == "None":
                                 continue 
 
-                            active_clip = next((track_item.child(j) for j in range(track_item.childCount()) if int(track_item.child(j).text(2)) <= t < int(track_item.child(j).text(3))), None)
+                            active_clip = next((track_item.child(j) for j in range(track_item.childCount()) if int(track_item.child(j).text(3)) <= t < int(track_item.child(j).text(4))), None)
+                            
+                            if not active_clip:
+                                print(f"  Track {i}: No active clip.")
                             
                             if active_clip:
                                 clip_data = active_clip.data(0, QtCore.Qt.ItemDataRole.UserRole)
                                 json_root = clip_data.get('animation_data')
                                 if not json_root: continue
 
-                                alpha = 1.0
-                                crossfade_data = active_clip.data(0, self.ui.CROSSFADE_ROLE) or {}
-                                
-                                if 'fade_in' in crossfade_data:
-                                    fade_duration = crossfade_data['fade_in'].get('duration', 0)
-                                    clip_start = int(active_clip.text(2))
-                                    if fade_duration > 0 and t < clip_start + fade_duration:
-                                        alpha = (t - clip_start) / float(fade_duration)
+                                # --- [START] Relative ---
+                                relative_offset_map = None
+                                clip_mode = active_clip.data(2, self.ui.CLIP_MODE_ROLE) or "Absolute"
+                                clip_start_frame = int(active_clip.text(3))
+                                is_first_frame = (t == clip_start_frame)
 
+                                if is_first_frame:
+                                    if clip_mode == "Absolute":
+                                        track_relative_offsets.pop(i, None) 
+                                        print(f"  Track {i}: Clip '{active_clip.text(0)}' starting in [Absolute] mode.")
+                                    
+                                    elif clip_mode == "Relative":
+                                        print(f"  Track {i}: Clip '{active_clip.text(0)}' starting in [Relative] mode. Calculating offset...")
+                                        
+                                        prev_clip = next((track_item.child(j) for j in range(track_item.childCount()) if int(track_item.child(j).text(4)) == t), None)
+                                        
+                                        if prev_clip:
+                                            
+                                            prev_clip_local_end_time = int(prev_clip.text(4)) - int(prev_clip.text(3))
+                                            end_transforms = self._get_clip_world_transform_at_local_time(prev_clip, prev_clip_local_end_time, scene_root_node)
+                                            
+                                            
+                                            start_transforms = self._get_clip_world_transform_at_local_time(active_clip, 0, scene_root_node)
+
+                                            combined_offset_map = {}
+                                            all_handles = set(end_transforms.keys()) | set(start_transforms.keys())
+                                            
+                                            for h in all_handles:
+                                                identity_pos, identity_rot = self.rt.Point3(0,0,0), self.rt.Quat(0,0,0,1)
+                                                end_val = end_transforms.get(h, {'pos': identity_pos, 'rot': identity_rot})
+                                                start_val = start_transforms.get(h, {'pos': identity_pos, 'rot': identity_rot})
+                                                
+                                                combined_offset_map[h] = {
+                                                    'end_pos': end_val['pos'], 'end_rot': end_val['rot'],
+                                                    'start_pos': start_val['pos'], 'start_rot': start_val['rot']
+                                                }
+                                            track_relative_offsets[i] = combined_offset_map
+                                            print(f"    -> Offset calculated based on clip '{prev_clip.text(0)}'.")
+                                        else:
+                                            print(f"    -> No previous clip found ending at frame {t}. Resetting offset.")
+                                            track_relative_offsets.pop(i, None) 
+
+                                if clip_mode == "Relative":
+                                    relative_offset_map = track_relative_offsets.get(i)
+                                # --- [END]---
+
+                                alpha = 1.0 
+                                crossfade_data = active_clip.data(0, self.ui.CROSSFADE_ROLE) or {}
+                                clip_end = int(active_clip.text(4))
+
+                                fade_in_duration = crossfade_data.get('fade_in', {}).get('duration', 0)
+                                fade_out_duration = crossfade_data.get('fade_out', {}).get('duration', 0)
+                                
+                                in_divisor = float(fade_in_duration - 1) if fade_in_duration > 1 else 1.0
+                                out_divisor = float(fade_out_duration - 1) if fade_out_duration > 1 else 1.0
+
+                                if fade_in_duration > 0:
+                                    time_into_fade = t - clip_start_frame
+                                    if time_into_fade < fade_in_duration:
+                                        alpha = time_into_fade / in_divisor
+                                        if fade_in_duration == 1: alpha = 1.0 
+
+                                if fade_out_duration > 0:
+                                    time_to_fade_end = (clip_end - 1) - t 
+                                    if time_to_fade_end < fade_out_duration:
+                                        current_fade_alpha = time_to_fade_end / out_divisor
+                                        if fade_out_duration == 1: current_fade_alpha = 0.0 
+                                        alpha = min(alpha, current_fade_alpha)
+
+                                is_fading_in_from_clip_below = False
+                                if 'fade_in' in crossfade_data:
+                                    from_uid = crossfade_data['fade_in'].get('from_uid')
+                                    if from_uid and i > 0:
+                                        track_below = mixer_tree.topLevelItem(i - 1)
+                                        clip_below = next((track_below.child(j) for j in range(track_below.childCount()) if int(track_below.child(j).text(3)) <= t < int(track_below.child(j).text(4))), None)
+                                        if clip_below and clip_below.data(0, self.ui.CLIP_UID_ROLE) == from_uid:
+                                            clip_below_data = clip_below.data(0, self.ui.CROSSFADE_ROLE) or {}
+                                            if 'fade_out' in clip_below_data:
+                                                is_fading_in_from_clip_below = True
+
+                                is_fading_out_to_clip_above = False
                                 if 'fade_out' in crossfade_data:
-                                    fade_duration = crossfade_data['fade_out'].get('duration', 0)
-                                    clip_end = int(active_clip.text(3))
-                                    if fade_duration > 0 and t > clip_end - fade_duration:
-                                        alpha = (clip_end - t) / float(fade_duration)
+                                    to_uid = crossfade_data['fade_out'].get('to_uid')
+                                    if to_uid and i + 1 < mixer_tree.topLevelItemCount():
+                                        track_above = mixer_tree.topLevelItem(i + 1)
+                                        clip_above = next((track_above.child(j) for j in range(track_above.childCount()) if int(track_above.child(j).text(3)) <= t < int(track_above.child(j).text(4))), None)
+                                        if clip_above and clip_above.data(0, self.ui.CLIP_UID_ROLE) == to_uid:
+                                            clip_above_data = clip_above.data(0, self.ui.CROSSFADE_ROLE) or {}
+                                            if 'fade_in' in clip_above_data:
+                                                is_fading_out_to_clip_above = True
+                                
+                                if is_fading_out_to_clip_above:
+                                    alpha = 1.0
+                                elif is_fading_in_from_clip_below:
+                                    pass
                                 
                                 alpha = max(0.0, min(1.0, alpha))
-                                if alpha <= 1e-6:
-                                    continue
+                                
+                                print(f"  Track {i}: Clip '{active_clip.text(0)}' active. Mode: [{clip_mode}]")
+                                print(f"    -> FadeIn: {is_fading_in_from_clip_below} (Dur: {fade_in_duration}), FadeOut: {is_fading_out_to_clip_above} (Dur: {fade_out_duration})")
+                                print(f"    -> FINAL ALPHA: {alpha:.4f}")
 
-                                clip_start_mixer = int(active_clip.text(2))
+                                if alpha <= 1e-6:
+                                    continue 
+
+                                clip_start_mixer = int(active_clip.text(3))
                                 clip_start_file = int(clip_data['properties'].get('start_frame_absolute', 0))
                                 local_time = t - clip_start_mixer
                                 json_frame_key = str(clip_start_file + local_time)
 
-                                def apply_layer_recursively(json_node, scene_node, current_alpha):
+                                # --- [START]---
+                                def apply_layer_recursively(json_node, scene_node, current_alpha, relative_offset_map, clip_mode):
                                     if not json_node or not scene_node: return
                                     handle = scene_node.handle
 
@@ -1009,6 +1231,18 @@ class TimelineLogic:
                                         pos = self.rt.Point3(*world_data['position'])
                                         rot = self.rt.Quat(*world_data['rotation_quat'])
                                         scl = self.rt.Point3(*world_data['scale'])
+
+                                        # ---Relative---
+                                        if clip_mode == "Relative" and relative_offset_map:
+                                            handle_offsets = relative_offset_map.get(handle)
+                                            if handle_offsets:
+                                                end_pos, end_rot = handle_offsets['end_pos'], handle_offsets['end_rot']
+                                                start_pos, start_rot = handle_offsets['start_pos'], handle_offsets['start_rot']
+                                                
+                                                pos = end_pos + (pos - start_pos)
+                                                rot = end_rot * (self.rt.inverse(start_rot) * rot)
+                                                
+                                        # ---Relative ---
                                         
                                         if handle not in final_world_transforms:
                                             identity_pos, identity_scl = self.rt.Point3(0,0,0), self.rt.Point3(1,1,1)
@@ -1037,6 +1271,8 @@ class TimelineLogic:
                                         if keys: val = self._get_value_at_time_from_keys(local_time, keys, {})
                                         if val is None: continue
                                         
+                                        #  Relative local_anim
+                                        
                                         unique_path_id = f"{scene_node.handle}_{path}"
                                         if unique_path_id not in final_local_values or blend_mode == "Override":
                                             final_local_values[unique_path_id] = {'path': path, 'value': val, 'node': scene_node}
@@ -1048,21 +1284,100 @@ class TimelineLogic:
                                                 final_local_values[unique_path_id]['value'] = [p + v for p, v in zip(prev_val, val)]
 
                                     for child_idx in range(min(len(json_node.get('children', [])), len(scene_node.children))):
-                                        apply_layer_recursively(json_node['children'][child_idx], scene_node.children[child_idx], current_alpha)
+                                        apply_layer_recursively(
+                                            json_node['children'][child_idx], 
+                                            scene_node.children[child_idx], 
+                                            current_alpha,
+                                            relative_offset_map, 
+                                            clip_mode
+                                        )
                                 
-                                apply_layer_recursively(json_root, scene_root_node, alpha)
+                                # --- [END] ---
+                                
+                                apply_layer_recursively(json_root, scene_root_node, alpha, relative_offset_map, clip_mode)
                         
+                        # bake_mixer_to_scene)
+                        # ...
                         for data in final_world_transforms.values():
-                            data['node'].transform = data['scl'] * data['rot'] * data['pos']
+                            node = data['node']
+
+                            if node.name == 'Box001':
+                                print(f"  APPLYING to {node.name}: Pos={data['pos']}")
+                            
+                            if not hasattr(node, 'controller'):
+                                try:
+                                    node.transform = data['scl'] * data['rot'] * data['pos']
+                                except Exception: pass 
+                                continue 
+                            
+                            if node.controller == self.rt.undefined:
+                                node.controller = self.rt.PRS()
+                            
+                            prs_controller = node.controller
+                            
+                            if self.rt.classOf(prs_controller) == self.rt.PRS:
+                            
+                                pos_controller = prs_controller.position
+                                # === FIX: Use Bezier controller to preserve curves ===
+                                if pos_controller == self.rt.undefined or self.rt.classOf(pos_controller) not in [self.rt.Bezier_Position, self.rt.Position_XYZ]:
+                                    pos_controller = self.rt.Bezier_Position()
+                                    prs_controller.position = pos_controller 
+                                
+                                rot_controller = prs_controller.rotation
+                                # === FIX: Use Bezier controller to preserve curves ===
+                                if rot_controller == self.rt.undefined or self.rt.classOf(rot_controller) not in [self.rt.Bezier_Rotation, self.rt.Euler_XYZ]:
+                                    rot_controller = self.rt.Bezier_Rotation()
+                                    prs_controller.rotation = rot_controller
+                                
+                                scl_controller = prs_controller.scale
+                                if scl_controller == self.rt.undefined or self.rt.classOf(scl_controller) != self.rt.Bezier_Scale:
+                                    scl_controller = self.rt.Bezier_Scale() 
+                                    prs_controller.scale = scl_controller
+
+                                try:
+                                    if pos_controller != self.rt.undefined:
+                                        pos_controller.value = data['pos']
+                                    if rot_controller != self.rt.undefined:
+                                        rot_controller.value = data['rot'] 
+                                    if scl_controller != self.rt.undefined:
+                                        scl_controller.value = data['scl']
+                                except Exception as e:
+                                    pass 
+                            
+                            else:
+                                try:
+                                    node.transform = data['scl'] * data['rot'] * data['pos']
+                                except Exception: pass
                         
                         for data in final_local_values.values():
                             subanim_prop = self._get_subanim_from_path(data['node'], data['path'])
                             if subanim_prop:
                                 try:
-                                    mxs_value = self._convert_json_to_mxs(data['value'], str(rt.classOf(subanim_prop.value)))
-                                    if hasattr(subanim_prop, 'value'): subanim_prop.value = mxs_value
-                                    elif hasattr(subanim_prop, 'controller'): subanim_prop.controller.value = mxs_value
-                                except Exception: pass
+                                    mxs_value = self._convert_json_to_mxs(data['value'], str(self.rt.classOf(subanim_prop.value)))
+                                    
+                                    target_to_set = None
+                                    if hasattr(subanim_prop, 'controller'):
+                                        target_to_set = subanim_prop.controller
+                                        if not target_to_set or target_to_set == self.rt.undefined:
+                                            if self.rt.isProperty(subanim_prop, 'value'):
+                                                val_class = self.rt.classOf(subanim_prop.value)
+                                                # === FIX: Use Bezier controller to preserve curves ===
+                                                if val_class == self.rt.Float:
+                                                    subanim_prop.controller = self.rt.Bezier_Float()
+                                                    target_to_set = subanim_prop.controller
+                                                elif val_class == self.rt.Point3:
+                                                    subanim_prop.controller = self.rt.Bezier_Position()
+                                                    target_to_set = subanim_prop.controller
+                                    
+                                    elif hasattr(subanim_prop, 'value'):
+                                        target_to_set = subanim_prop
+                                    
+                                    if target_to_set and target_to_set != self.rt.undefined:
+                                        target_to_set.value = mxs_value
+                                        
+                                except Exception: 
+                                    pass 
+
             except StopIteration:
                 print("Bake process was cancelled by the user.")
             finally:
@@ -1072,8 +1387,7 @@ class TimelineLogic:
 
         print("Composite bake complete!")
         self.ui._force_ui_refresh()
-        QtWidgets.QMessageBox.information(self.ui, "Success", "Motion Mixer composite bake completed successfully!")
-
+        QtWidgets.QMessageBox.information(self.ui, "Success", "Motion Mixer composite bake (with Relative mode) completed successfully!")
 
     #=============================
     # End Bake Motion Mixer to Scene
@@ -1482,7 +1796,7 @@ class TimelineLogic:
             elif key_name in current_data:
                 
                 del current_data[key_name]
-                print(f"🔵 {key_name} data removed.")
+                print(f" {key_name} data removed.")
 
             
             final_data_to_store = current_data if current_data else None
