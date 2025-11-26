@@ -1,8 +1,8 @@
 # ====================================================================
 # ===                                                              ===
-# ===      Timeline Tool for 3ds Max                               ===
-# ===      Author: Iman Shirani                                    ===
-# ===      Version: 0.0.2                                          ===
+# ===      Timeline Tool for 3ds Max                               ===                                                      
+# ===      Author: Iman Shirani                                    ===                                                    
+# ===      Version: 0.0.3                                          ===                                              
 # ===                                                              ===
 # ===                                                              ===           
 # ====================================================================
@@ -94,5 +94,4 @@ def launch_timeline():
     print("✅ Timeline Pro launched successfully as a dockable toolbar!")
 
 # --- Run the main function ---
-
 launch_timeline()

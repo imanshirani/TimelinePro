@@ -1,6 +1,3 @@
-# =============================================
-# === FILE 1: timeline_logic.py             ===
-# =============================================
 
 import sys
 import os
@@ -37,7 +34,7 @@ def load_settings():
         'helper_color': '#554B37',  # Orangish
         'geometry_color': "#475A6D", # Blue
         'SpacewarpObject_color': "#ACA6A6", # white         
-        'bone_color': '#C8BFE7', #
+        'bone_color': '#C8BFE7', 
         'particle_color': "#886927"
     }
     config['Default_Hidden_Tracks'] ={
@@ -351,7 +348,7 @@ class SettingsDialog(QtWidgets.QDialog):
         
         about_text = f"""
         <h3>Timeline Pro</h3>
-        <p><b>Version:</b> 0.0.2</p>
+        <p><b>Version:</b> 0.0.3</p>
         <p>A professional non-linear animation timeline for 3ds Max.</p>
         <p>Developed by: <b>Iman shirani</b></p>
         <p>&copy; 2025</p>
@@ -1544,21 +1541,31 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                         # ---Fade-in / Fade-out ---
                         crossfade_data = clip_item.data(0, self.timeline_widget.CROSSFADE_ROLE)
                         if isinstance(crossfade_data, dict):
+                            # Fade In
                             if 'fade_in' in crossfade_data:
                                 duration = crossfade_data['fade_in'].get('duration', 0)
                                 if duration > 0:
                                     fade_width_px = duration * ruler.pixels_per_frame
                                     fade_rect = QtCore.QRectF(clip_rect_f.left(), clip_rect_f.top(), fade_width_px, clip_rect_f.height())
+                                    
                                     self.scene.addRect(fade_rect, QtCore.Qt.PenStyle.NoPen, QtGui.QBrush(QtGui.QColor(0, 0, 0, 70))).setZValue(2)
-                                    self.scene.addLine(fade_rect.topLeft(), fade_rect.bottomRight(), QtGui.QPen(QtGui.QColor(255, 255, 255, 150), 1)).setZValue(3)
+                                    
+                                    # --- FIX: Use QLineF ---
+                                    line = QtCore.QLineF(fade_rect.topLeft(), fade_rect.bottomRight())
+                                    self.scene.addLine(line, QtGui.QPen(QtGui.QColor(255, 255, 255, 150), 1)).setZValue(3)
 
+                            # Fade Out
                             if 'fade_out' in crossfade_data:
                                 duration = crossfade_data['fade_out'].get('duration', 0)
                                 if duration > 0:
                                     fade_width_px = duration * ruler.pixels_per_frame
                                     fade_rect = QtCore.QRectF(clip_rect_f.right() - fade_width_px, clip_rect_f.top(), fade_width_px, clip_rect_f.height())
+                                    
                                     self.scene.addRect(fade_rect, QtCore.Qt.PenStyle.NoPen, QtGui.QBrush(QtGui.QColor(0, 0, 0, 70))).setZValue(2)
-                                    self.scene.addLine(fade_rect.topRight(), fade_rect.bottomLeft(), QtGui.QPen(QtGui.QColor(255, 255, 255, 150), 1)).setZValue(3)
+                                    
+                                    # --- FIX: Use QLineF ---
+                                    line = QtCore.QLineF(fade_rect.topRight(), fade_rect.bottomLeft())
+                                    self.scene.addLine(line, QtGui.QPen(QtGui.QColor(255, 255, 255, 150), 1)).setZValue(3)
                         
                         
                         text_item = self.scene.addText(clip_item.text(0))
@@ -1569,78 +1576,90 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                     except (ValueError, IndexError):
                         continue
         else:
-            # === Track List ===
+            # === Track List Mode ===
             track_list_widget = self.timeline_widget.track_list_panel.track_tree
+            
+            
             iterator = QtWidgets.QTreeWidgetItemIterator(track_list_widget, QtWidgets.QTreeWidgetItemIterator.IteratorFlag.NotHidden)
             
             while iterator.value():
                 item = iterator.value()
                 rect = track_list_widget.visualItemRect(item)
                 
+                
                 if item.parent() is None:
-                    
                     start_frame = item.data(0, self.timeline_widget.CLIP_START_ROLE)
                     end_frame = item.data(0, self.timeline_widget.CLIP_END_ROLE)
+                    
+                    #             ‌                     
                     if start_frame is not None and end_frame is not None and ruler.pixels_per_frame > 0:
                         clip_start_x = (start_frame - ruler.start_frame) * ruler.pixels_per_frame
                         clip_end_x = (end_frame - ruler.start_frame) * ruler.pixels_per_frame
+                        
+                        #                    
                         clip_rect_f = QtCore.QRectF(clip_start_x, rect.top() + 2, clip_end_x - clip_start_x, rect.height() - 4)
                         
-                        
+                        #                   
                         base_brush = item.data(0, self.timeline_widget.VISIBILITY_ROLE)
-                        
                         if not base_brush:
-                            
                             base_brush = QtGui.QBrush(QtGui.QColor(self.timeline_widget.settings['Type_Colors'].get('geometry_color', "#475A6D")))
                         
                         if item.isSelected():
-                            
                             clip_brush = QtGui.QBrush(base_brush.color().lighter(150))
                             clip_pen = QtGui.QPen(base_brush.color().lighter(200), 2) 
                         else:
-                            
                             clip_brush = base_brush
                             clip_pen = QtGui.QPen(base_brush.color().lighter(150))
                         
-                        
+                        #                   
                         clip_gitem = self.scene.addRect(clip_rect_f, clip_pen, clip_brush)
                         clip_gitem.setZValue(1)
-                        #QTreeWidgetItem
                         clip_gitem.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, item)
+
+                # -------------------------------------------------------
+                # (Track)->       ‌    ‌  
+                # -------------------------------------------------------
                 else:
-                   
                     y_center = rect.center().y()
                     
                     try:
                         keys_to_draw = [] 
-                        
+
+                        #(Cache)         
                         if is_cache_enabled:
                             parent_clip_item = item
-                            while parent_clip_item.parent() is not None: parent_clip_item = parent_clip_item.parent()
+                            while parent_clip_item.parent() is not None: 
+                                parent_clip_item = parent_clip_item.parent()
+                            
                             animation_map = parent_clip_item.data(0, self.timeline_widget.CLIP_DATA_ROLE)
                             if animation_map:
                                 track_path = self._get_track_path(item)
                                 track_data = animation_map.get("tracks", {}).get(track_path)
+                                
                                 if track_data and "keys" in track_data:
                                     for i, key_dict in enumerate(track_data["keys"]):
                                         key_frame = key_dict["time"]
                                         if ruler.start_frame <= key_frame <= ruler.end_frame:
                                             key_id = (parent_clip_item, track_path, i)
                                             keys_to_draw.append((key_frame, key_id))
+                        
+                        #(Live)    
                         else:
-                            # Live
                             sub_anim = item.data(0, self.timeline_widget.SUBANIM_ROLE)
-                            if hasattr(sub_anim, 'controller') and sub_anim.controller and rt.isProperty(sub_anim.controller, "keys"):
+                            #             
+                            if sub_anim and hasattr(sub_anim, 'controller') and sub_anim.controller:
                                 controller = sub_anim.controller
-                                for idx in range(controller.keys.count):
-                                    key_frame = int(controller.keys[idx].time)
-                                    if ruler.start_frame <= key_frame <= ruler.end_frame:
-                                        key_id = (controller, None, idx)
-                                        keys_to_draw.append((key_frame, key_id))
+                                if rt.isProperty(controller, "keys"):
+                                    for idx in range(controller.keys.count):
+                                        key_frame = int(controller.keys[idx].time)
+                                        if ruler.start_frame <= key_frame <= ruler.end_frame:
+                                            key_id = (controller, None, idx)
+                                            keys_to_draw.append((key_frame, key_id))
                         
-                        
+                        #              
                         for key_frame, key_id in keys_to_draw:
                             x_pos = (key_frame - ruler.start_frame) * ruler.pixels_per_frame
+                            
                             is_selected = key_id in self.selected_keys
                             current_brush = self.selected_key_brush if is_selected else self.key_brush
                             
@@ -1653,9 +1672,11 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                     except Exception:
                         pass
 
-                
+                #                       
                 y_bottom = rect.bottom()
                 self.scene.addLine(view_rect.left(), y_bottom, view_rect.right(), y_bottom, self.grid_pen).setZValue(-10)
+                
+                #                  
                 iterator += 1
 
         
@@ -2245,21 +2266,26 @@ class KeyframeArea(QtWidgets.QGraphicsView):
             
             item = item_under_cursor_tree
             menu = QtWidgets.QMenu(self)
-            track_item = item.parent()
-            track_index = self.timeline_widget.motion_mixer_panel.track_tree.indexOfTopLevelItem(track_item)
-            
-            can_fade_in = (track_index > 0 and self.timeline_widget.motion_mixer_panel.track_tree.topLevelItem(track_index - 1).childCount() > 0)
-            can_fade_out = (track_index < self.timeline_widget.motion_mixer_panel.track_tree.topLevelItemCount() - 1 and self.timeline_widget.motion_mixer_panel.track_tree.topLevelItem(track_index + 1).childCount() > 0)
 
-            if can_fade_in:
-                fade_in_action = menu.addAction("Create/Edit Fade-In From Below...")
-                fade_in_action.triggered.connect(lambda: self.timeline_widget.logic.setup_crossfade_for_clip(item, 'in'))
-            if can_fade_out:
-                fade_out_action = menu.addAction("Create/Edit Fade-Out To Above...")
-                fade_out_action.triggered.connect(lambda: self.timeline_widget.logic.setup_crossfade_for_clip(item, 'out'))
+            loop_action = menu.addAction("Set Loop Count...")
+            loop_action.triggered.connect(lambda: self.timeline_widget.logic.set_clip_loop_count(item))
             
+            menu.addSeparator()
+
+            
+            
+            # Fade In
+            fade_in_action = menu.addAction("Fade In...")
+            fade_in_action.triggered.connect(lambda: self.timeline_widget.logic.setup_crossfade_for_clip(item, 'in'))
+            
+            # Fade Out
+            fade_out_action = menu.addAction("Fade Out...")
+            fade_out_action.triggered.connect(lambda: self.timeline_widget.logic.setup_crossfade_for_clip(item, 'out'))
+            
+            # =================================
+
             if menu.isEmpty(): return
-            menu.exec_(event.globalPos())
+            menu.exec(event.globalPos())
             
         else: 
             # Track List
@@ -2561,6 +2587,7 @@ class MyTimelineWidget(QtWidgets.QWidget):
     CROSSFADE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 9
     CLIP_MODE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 10
     GRAPHICS_ITEM_KEY_ID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 11
+    CLIP_LOOP_ROLE = QtCore.Qt.ItemDataRole.UserRole + 12
 
     DEFAULT_HIDDEN_TRACKS = sorted({
         "Visibility", "Space Warps", "Material", "Object",
@@ -4486,24 +4513,21 @@ class MixerTreeWidget(QtWidgets.QTreeWidget):
         self.setDropIndicatorShown(True)
 
     def dropEvent(self, event: QtGui.QDropEvent):
-        print("\n--- 💧 dropEvent Fired (Fix v17) 💧 ---")
-
+        print("\n--- 💧 dropEvent Fired (With 6-Mode Loop) 💧 ---")
         
+        #                   
         dragged_item = self.selectedItems()[0] if self.selectedItems() else None
         
-        
+        #                       
         event.setDropAction(QtCore.Qt.DropAction.MoveAction)
         super().dropEvent(event)
         
-        print("  -> Drop complete. Rebuilding all widgets just in case...")
-        
-        
+        #              ‌   (        ‌  )               
         for i in range(self.topLevelItemCount()):
             track_item = self.topLevelItem(i)
             
-            
+            # 1.         Blend Combo (     1)
             if self.itemWidget(track_item, 1) is None:
-                # print(f"  -> FIXING: Re-creating Blend ComboBox for Track '{track_item.text(0)}'")
                 blend_combo = QtWidgets.QComboBox(self)
                 blend_combo.addItems(["Override", "Additive", "None"])
                 current_mode = track_item.data(1, self.timeline_widget.BLEND_MODE_ROLE) or "Override"
@@ -4513,23 +4537,34 @@ class MixerTreeWidget(QtWidgets.QTreeWidget):
                 )
                 self.setItemWidget(track_item, 1, blend_combo)
 
-            
             for j in range(track_item.childCount()):
                 clip_item = track_item.child(j)
-                if self.itemWidget(clip_item, 2) is None:
-                    # print(f"  -> FIXING: Re-creating Mode ComboBox for Clip '{clip_item.text(0)}'")
-                    mode_combo = QtWidgets.QComboBox(self)
-                    mode_combo.addItems(["Absolute", "Relative"])
-                    current_mode = clip_item.data(2, self.timeline_widget.CLIP_MODE_ROLE) or "Absolute"
-                    mode_combo.setCurrentText(current_mode)
-                    mode_combo.currentTextChanged.connect(
-                        lambda text, bound_item=clip_item: bound_item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, text)
+                
+                # 2.         Clip Mode Combo (     2)
+                #if self.itemWidget(clip_item, 2) is None:
+                #    mode_combo = QtWidgets.QComboBox(self)
+                #    mode_combo.addItems(["Absolute", "Relative"])
+                #    current_mode = clip_item.data(2, self.timeline_widget.CLIP_MODE_ROLE) or "Absolute"
+                #    mode_combo.setCurrentText(current_mode)
+                #    mode_combo.currentTextChanged.connect(
+                #        lambda text, bound_item=clip_item: bound_item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, text)
+                #    )
+                #    self.setItemWidget(clip_item, 2, mode_combo)
+
+                # 3. Re-create Loop Combo (Active)
+                if self.itemWidget(clip_item, 5) is None:
+                    loop_combo = QtWidgets.QComboBox(self)
+                    # ---                 ---
+                    loop_combo.addItems(["Once", "Constant", "Cycle", "PingPong", "Linear", "Relative"])
+                    
+                    current_loop = clip_item.data(5, self.timeline_widget.CLIP_LOOP_ROLE) or "Once"
+                    loop_combo.setCurrentText(current_loop)
+                    
+                    loop_combo.currentTextChanged.connect(
+                        lambda text, bound_item=clip_item: bound_item.setData(5, self.timeline_widget.CLIP_LOOP_ROLE, text)
                     )
-                    self.setItemWidget(clip_item, 2, mode_combo)
-        # --- END OF FIX v17 ---
-        
-        print("--- ✅ dropEvent Finished (Fix v17)  ---")
-    
+                    self.setItemWidget(clip_item, 5, loop_combo)
+
     def startDrag(self, supportedActions):
         """
         This function is executed before any drawing operation begins.
@@ -4590,84 +4625,86 @@ class MotionMixerPanel(QtWidgets.QWidget):
         
         self.track_tree = MixerTreeWidget(self.timeline_widget) 
         
-        self.track_tree.setColumnCount(5)
-        self.track_tree.setHeaderLabels(["Track Name", "Blend Mode", "Mode", "Start", "End"])
+        self.track_tree.setColumnCount(6)
+        # 0:Name, 1:Blend, 2:Mode(Hidden), 3:Start, 4:End, 5:Loop
+        self.track_tree.setHeaderLabels(["Track Name", "Blend Mode", "", "Start", "End", "Loop Mode"])
         self.track_tree.setColumnWidth(1, 100) 
-        self.track_tree.setColumnWidth(2, 80)
+        self.track_tree.setColumnWidth(2, 0)
+        self.track_tree.setColumnWidth(5, 80)
 
-        
-        
+        # Hide Mode Column
+        self.track_tree.setColumnHidden(2, True)
+
         self.main_layout.addLayout(toolbar)
         self.main_layout.addWidget(self.track_tree)
         
     def _import_clip_file(self):
+        """
+        Modified Import: Always creates a NEW track for each clip.
+        Mode column is handled as data-only (Hidden from UI).
+        """
         file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Import Animation Clip(s)", "", "Animation Clips (*.clip)")
         if not file_paths: return
 
-        selected_track = None
-        selected_items = self.track_tree.selectedItems()
-        
-        if selected_items:
-            item = selected_items[0]
-            selected_track = item if item.parent() is None else item.parent()
-            print(f"DEBUG: Found selected track: {selected_track.text(0)}")
-        else:
-            print("DEBUG: No track selected.")
+        # ---                           ---
+        #               ‌                                                         ‌     .
 
-        if not selected_track:
-            print("DEBUG: Creating a new track.")
-            track_name = os.path.splitext(os.path.basename(file_paths[0]))[0]
-            track_item = QtWidgets.QTreeWidgetItem([track_name, "", "", "", ""]) 
-            self.track_tree.addTopLevelItem(track_item)
-            
-            blend_combo = QtWidgets.QComboBox(self.track_tree)
-            blend_combo.addItems(["Override", "Additive", "None"]) 
-            blend_combo.currentTextChanged.connect(
-                lambda text, item=track_item: item.setData(1, self.timeline_widget.BLEND_MODE_ROLE, text)
-            )
-            self.track_tree.setItemWidget(track_item, 1, blend_combo)
-            track_item.setData(1, self.timeline_widget.BLEND_MODE_ROLE, "Override")
-            selected_track = track_item
-        else:
-             print(f"DEBUG: Adding clips to existing track: {selected_track.text(0)}")
-        
         for file_path in file_paths:
             try:
                 with open(file_path, 'r') as f: clip_data = json.load(f)
 
                 clip_name = os.path.basename(file_path)
                 duration = clip_data.get("properties", {}).get("duration_frames", 100)
-                
-                last_end_frame = 0
-                if selected_track.childCount() > 0:
-                    last_clip = selected_track.child(selected_track.childCount() - 1)
-                    last_end_frame = int(last_clip.text(4)) 
-                
-                start_time = last_end_frame 
+                track_name = os.path.splitext(clip_name)[0]
+
+                # 1.                       
+                track_item = QtWidgets.QTreeWidgetItem([track_name, "", "", "", "", ""])
+                self.track_tree.addTopLevelItem(track_item)
+
+                #       Blend Mode         
+                blend_combo = QtWidgets.QComboBox(self.track_tree)
+                blend_combo.addItems(["Override", "Additive", "None"])
+                blend_combo.currentTextChanged.connect(
+                    lambda text, item=track_item: item.setData(1, self.timeline_widget.BLEND_MODE_ROLE, text)
+                )
+                self.track_tree.setItemWidget(track_item, 1, blend_combo)
+                track_item.setData(1, self.timeline_widget.BLEND_MODE_ROLE, "Override")
+
+                # 2.           (              0                            ‌     )
+                #                                    0                  ‌             .
+                #                      0           (     ‌                          )
+                start_time = 0
                 end_time = start_time + int(duration)
                 
-                clip_item = QtWidgets.QTreeWidgetItem([clip_name, "", "", str(start_time), str(end_time)])
+                clip_item = QtWidgets.QTreeWidgetItem([clip_name, "", "", str(start_time), str(end_time), ""])
                 clip_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, clip_data)
                 
-                
-                selected_track.addChild(clip_item)
-                selected_track.setExpanded(True)
+                track_item.addChild(clip_item)
+                track_item.setExpanded(True)
 
+                # --- 3. MODE COLUMN (HIDDEN) ---
+                #         ComboBox    ‌      (                        )  
+                #                  ‌        Bake        .
                 
-                mode_combo = QtWidgets.QComboBox(self.track_tree)
-                mode_combo.addItems(["Absolute", "Relative"])
-                mode_combo.currentTextChanged.connect(
-                    lambda text, item=clip_item: item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, text)
+                # mode_combo = QtWidgets.QComboBox(self.track_tree)
+                # mode_combo.addItems(["Absolute", "Relative"])
+                # ...
+                # self.track_tree.setItemWidget(clip_item, 2, mode_combo) 
+                
+                #                    ‌    Absolute   ‌      
+                clip_item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, "Absolute")
+
+
+                # --- 4. LOOP COLUMN (ACTIVE) ---
+                loop_combo = QtWidgets.QComboBox(self.track_tree)
+                loop_combo.addItems(["Once", "Constant", "Cycle", "PingPong", "Linear", "Relative"])
+                loop_combo.setCurrentText("Once")
+                clip_item.setData(5, self.timeline_widget.CLIP_LOOP_ROLE, "Once")
+                
+                loop_combo.currentTextChanged.connect(
+                    lambda text, item=clip_item: item.setData(5, self.timeline_widget.CLIP_LOOP_ROLE, text)
                 )
-                self.track_tree.setItemWidget(clip_item, 2, mode_combo) 
-                # --- END OF FIX (v18) ---
-                
-                default_mode = "Absolute"
-                if selected_track.childCount() > 1: 
-                    default_mode = "Relative"
-                
-                clip_item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, default_mode)
-                mode_combo.setCurrentText(default_mode)
+                self.track_tree.setItemWidget(clip_item, 5, loop_combo)
 
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Import Error", f"Failed to import clip: {file_path}\nError: {e}")
@@ -4676,12 +4713,20 @@ class MotionMixerPanel(QtWidgets.QWidget):
         self.timeline_widget.sync_scrollbars()
 
     def _remove_selected(self):
+        """
+        Removes selected tracks. If a clip is selected, removes its parent track.
+        """
         selected_items = self.track_tree.selectedItems()
         if not selected_items: return
             
         tracks_to_delete = set()
         for item in selected_items:
-            tracks_to_delete.add(item.parent() if item.parent() else item)
+            if item.parent():
+                #                                (   )          
+                tracks_to_delete.add(item.parent())
+            else:
+                #                                           
+                tracks_to_delete.add(item)
                 
         root = self.track_tree.invisibleRootItem()
         for track in tracks_to_delete:
