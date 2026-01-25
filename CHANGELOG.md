@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.4] - 2026-01-25
+
+### 🚀 New Features
+- **Snapping Tool (Magnet):** Added a new toggle button in the toolbar. When enabled, moving keys will snap to the nearest integer frame. This works in both the Track View and Curve Editor.
+
+
+### 🛠 Improvements Performance 🚀
+- **View Culling:** Implemented a smart rendering system. Keys and grid lines outside the current visual viewport are no longer drawn. This significantly improves FPS in scenes with thousands of keys.
+- **Optimized Scrubbing:** Completely rewrote the time slider logic. Dragging the ruler now updates the playhead visual line directly (bypassing full scene redraws), resulting in zero-lag scrubbing.
+
+### 🐛 Bug Fixes
+
+- Fixed synchronization lag where the red playhead line wouldn't align perfectly with the ruler triangle during fast movements.
+- Fixed the logic in `mouseMoveEvent` to correctly respect the Snapping toggle state (previously it was always snapping).
+- Fixed issues with the Curve Editor's internal scrollbar syncing.
+
+### Changed
+- Refactored `TimelineRuler` and `KeyframeArea` to share a more efficient update mechanism for the slider visual.
 
 ## [0.0.3] - 2025-11-26
 ### 🐛 Bug Fixes
