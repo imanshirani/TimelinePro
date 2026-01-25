@@ -1370,7 +1370,7 @@ class TimelineLogic:
                                                         prev['rot'] = self.rt.Slerp(prev['rot'], rot, current_alpha)
                                                         prev['scl'] = (prev['scl'] * (1.0 - current_alpha)) + (scl * current_alpha)
                                                 else:
-                                                    #                      (     ‌    )               ‌   
+                                                     
                                                     final_world_transforms[handle] = {'pos': pos, 'rot': rot, 'scl': scl, 'node': scene_node}
 
                                         # Local Animation Processing

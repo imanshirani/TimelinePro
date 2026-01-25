@@ -348,7 +348,7 @@ class SettingsDialog(QtWidgets.QDialog):
         
         about_text = f"""
         <h3>Timeline Pro</h3>
-        <p><b>Version:</b> 0.0.3</p>
+        <p><b>Version:</b> 0.0.4</p>
         <p>A professional non-linear animation timeline for 3ds Max.</p>
         <p>Developed by: <b>Iman shirani</b></p>
         <p>&copy; 2025</p>
@@ -565,6 +565,7 @@ class TimelineRuler(QtWidgets.QWidget):
         self.pixels_per_frame = 1.0
         self.start_frame = 0
         self.end_frame = 100
+        self.setMouseTracking(True)
         
         
         self.is_dragging_slider = False
@@ -652,23 +653,81 @@ class TimelineRuler(QtWidgets.QWidget):
     
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            if self.timeline_widget.sync_timer.isActive():
+                self.timeline_widget.sync_timer.stop()
+
+            
             new_frame = self._x_to_frame(event.pos().x())
-            rt.currentTime = new_frame
+            pymxs.runtime.sliderTime = new_frame 
+            
+            self.timeline_widget.current_frame = int(new_frame)
+            
             self.is_dragging_slider = True 
+            self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+            
+            
+            self.update()
+            self.timeline_widget.keyframe_area.update()
+            
             event.accept()
 
     def mouseMoveEvent(self, event):
+
         if self.is_dragging_slider:
             new_frame = self._x_to_frame(event.pos().x())
+            clamped_frame = int(max(self.start_frame, min(new_frame, self.end_frame)))
             
-            clamped_frame = max(self.start_frame, min(new_frame, self.end_frame))
-            if rt.currentTime != clamped_frame:
-                rt.currentTime = clamped_frame
+            self.timeline_widget.current_frame = clamped_frame
+            
+            
+            pymxs.runtime.sliderTime = clamped_frame
+            
+            
+            self.update() 
+            key_area = self.timeline_widget.keyframe_area
+            if hasattr(key_area, 'slider_item') and key_area.slider_item:
+                new_x = int((clamped_frame - self.start_frame) * self.pixels_per_frame)
+                line = key_area.slider_item.line()
+                line.setLine(new_x, line.y1(), new_x, line.y2())
+                key_area.slider_item.setLine(line)
+            else:
+                
+                key_area._redraw_scene()
+
+            
+            curve_editor = self.timeline_widget.curve_editor
+            if hasattr(curve_editor, 'slider_item') and curve_editor.slider_item:
+               
+                new_x_curve = curve_editor._frame_to_x(clamped_frame)
+                line = curve_editor.slider_item.line()
+                line.setLine(new_x_curve, 0, new_x_curve, line.y2())
+                curve_editor.slider_item.setLine(line)
+            
+            
             event.accept()
+            return
+
+        
+        current_frame = self.timeline_widget.current_frame
+        slider_x = int((current_frame - self.start_frame) * self.pixels_per_frame)
+        
+        if abs(event.pos().x() - slider_x) < 10:
+            self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+        else:
+            self.unsetCursor()
+            
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
             self.is_dragging_slider = False
+            self.unsetCursor()
+            
+            
+            if not self.timeline_widget.sync_timer.isActive():
+                self.timeline_widget.sync_timer.start(50)
+                
+            self.timeline_widget._force_ui_refresh()
             event.accept()
 
 
@@ -784,17 +843,18 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
         self.scene = QtWidgets.QGraphicsScene(self)
         self.setScene(self.scene)
         
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
         
-        self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        
-        
+        self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)        
         self.setStyleSheet("background-color: #2d2d2d; border: none;")
         
         
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
-        
+        self.is_snapping = True
+
         self.timeline_widget = timeline_widget
         self.ruler = timeline_widget.ruler
         
@@ -853,6 +913,13 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
         view_rect = self.mapToScene(self.viewport().rect()).boundingRect()
         
         
+        start_draw = max(self.ruler.start_frame, int(self._x_to_frame(view_rect.left())))
+        end_draw = min(self.ruler.end_frame, int(self._x_to_frame(view_rect.right())))
+        
+        
+        start_draw -= major_step
+        end_draw += major_step
+        
         for frame in range(self.ruler.start_frame, self.ruler.end_frame + 1, major_step):
             x_pos = self._frame_to_x(frame)
             self.scene.addLine(x_pos, view_rect.top(), x_pos, view_rect.bottom(), self.grid_pen).setZValue(-10)
@@ -871,82 +938,175 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
                 try:
                     if sub_anim and sub_anim.controller:
                         controller_class = rt.classOf(sub_anim.controller)
+                        
                         if controller_class in [rt.bezier_float, rt.linear_float, rt.tcb_float]:
                             if not (rt.isProperty(sub_anim.controller, "keys") and sub_anim.controller.keys.count > 0):
-                                iterator += 1
-                                continue
+                                iterator += 1; continue
 
                             controller = sub_anim.controller
                             keys = controller.keys
-                            
                             track_name = item.text(1)
+                            
+                            
                             active_pen, active_brush = self.curve_pen_z, self.key_brush_z
                             if track_name.startswith("X "): active_pen, active_brush = self.curve_pen_x, self.key_brush_x
                             elif track_name.startswith("Y "): active_pen, active_brush = self.curve_pen_y, self.key_brush_y
 
                             
-                            for i in range(keys.count - 1):
-                                k1, k2 = keys[i], keys[i+1]
-                                k1_time, k1_val = float(k1.time), float(k1.value)
-                                k2_time, k2_val = float(k2.time), float(k2.value)
-                                p1 = QtCore.QPointF(self._frame_to_x(k1_time), self._value_to_y(k1_val))
-                                p2 = QtCore.QPointF(self._frame_to_x(k2_time), self._value_to_y(k2_val))
-                                
-                                path = QtGui.QPainterPath(p1)
-                                if controller_class == rt.bezier_float:
-                                    time_diff_3 = (k2_time - k1_time) / 3.0
-                                    c1 = QtCore.QPointF(self._frame_to_x(k1_time + time_diff_3), self._value_to_y(k1_val + float(k1.outTangent) * time_diff_3))
-                                    c2 = QtCore.QPointF(self._frame_to_x(k2_time - time_diff_3), self._value_to_y(k2_val - float(k2.inTangent) * time_diff_3))
-                                    path.cubicTo(c1, c2, p2)
-                                else:
-                                    path.lineTo(p2)
-                                
-                                self.scene.addPath(path, active_pen).setZValue(1)
-
+                            path = QtGui.QPainterPath()
+                            first_pt = True
                             
                             for i in range(keys.count):
+                                k = keys[i]
+                                time, val = float(k.time), float(k.value)
+                                x, y = self._frame_to_x(time), self._value_to_y(val)
+                                
+                                if first_pt:
+                                    path.moveTo(x, y)
+                                    first_pt = False
+                                else:
+                                    
+                                    prev_k = keys[i-1]
+                                    prev_x, prev_y = self._frame_to_x(float(prev_k.time)), self._value_to_y(float(prev_k.value))
+                                    
+                                    if controller_class == rt.bezier_float:
+                                        
+                                        cx1 = prev_x + (x - prev_x) * 0.33
+                                        cy1 = prev_y 
+                                        cx2 = x - (x - prev_x) * 0.33
+                                        cy2 = y
+                                        path.cubicTo(cx1, cy1, cx2, cy2, x, y)
+                                    else:
+                                        path.lineTo(x, y)
+                            
+                            self.scene.addPath(path, active_pen).setZValue(1)
+
+                            
+                            view_start_frame = self.ruler.start_frame
+                            view_end_frame = self.ruler.end_frame
+
+                            for i in range(keys.count):
                                 key = keys[i]
+                                key_time = float(key.time)
+                                
+                                
+                                if key_time < view_start_frame or key_time > view_end_frame:
+                                    continue 
+
+                                key_val = float(key.value)
+                                k_pos = QtCore.QPointF(self._frame_to_x(key_time), self._value_to_y(key_val))
+                                
                                 key_id = (controller, i)
                                 is_selected = (key_id in self.selected_keys)
                                 current_brush = self.selected_key_brush if is_selected else active_brush
-                                k_pos = QtCore.QPointF(self._frame_to_x(float(key.time)), self._value_to_y(float(key.value)))
                                 
                                 key_item = self.scene.addPolygon(self.key_polygon, QtGui.QPen(QtCore.Qt.PenStyle.NoPen), current_brush)
                                 key_item.setPos(k_pos)
                                 key_item.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, key_id)
-                                key_item.setZValue(10) 
+                                key_item.setZValue(10)
 
                                 
                                 if is_selected and rt.isProperty(key, 'inTangent'):
-                                    key_pos_scene = k_pos
-                                    out_handle_pos_scene = self._get_handle_pos_scene(key, 'out')
-                                    in_handle_pos_scene = self._get_handle_pos_scene(key, 'in')
-                                    
-                                    
-                                    self.scene.addLine(QtCore.QLineF(key_pos_scene, out_handle_pos_scene), self.tangent_pen).setZValue(9)
-                                    self.scene.addLine(QtCore.QLineF(key_pos_scene, in_handle_pos_scene), self.tangent_pen).setZValue(9)
-                                    
-                                    
-                                    hs = self.handle_size
-                                    handle_out_item = self.scene.addEllipse(-hs, -hs, hs*2, hs*2, QtGui.QPen(QtCore.Qt.PenStyle.NoPen), self.handle_brush)
-                                    handle_out_item.setPos(out_handle_pos_scene)
-                                    handle_out_item.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, (controller, i, 'out'))
-                                    handle_out_item.setZValue(11)
-                                    
-                                    handle_in_item = self.scene.addEllipse(-hs, -hs, hs*2, hs*2, QtGui.QPen(QtCore.Qt.PenStyle.NoPen), self.handle_brush)
-                                    handle_in_item.setPos(in_handle_pos_scene)
-                                    handle_in_item.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, (controller, i, 'in'))
-                                    handle_in_item.setZValue(11)
+                                    self._draw_handles(key, controller, i, k_pos)
 
                 except Exception as e:
                     print(f"Error drawing curve: {e}") 
             iterator += 1
             
-        
-        slider_x = self._frame_to_x(self.timeline_widget.current_frame)
-        slider_pen = QtGui.QPen(QtGui.QColor("#ff4747"), 2)
-        self.scene.addLine(slider_x, view_rect.top(), slider_x, view_rect.bottom(), slider_pen).setZValue(100)
+        self._update_slider_visual()
+       
     
+    def _draw_handles(self, key, controller, i, key_pos_scene):
+        out_handle_pos = self._get_handle_pos_scene(key, 'out')
+        in_handle_pos = self._get_handle_pos_scene(key, 'in')
+        
+        self.scene.addLine(QtCore.QLineF(key_pos_scene, out_handle_pos), self.tangent_pen).setZValue(9)
+        self.scene.addLine(QtCore.QLineF(key_pos_scene, in_handle_pos), self.tangent_pen).setZValue(9)
+        
+        hs = self.handle_size
+        for h_type, pos in [('out', out_handle_pos), ('in', in_handle_pos)]:
+            h_item = self.scene.addEllipse(-hs, -hs, hs*2, hs*2, QtGui.QPen(QtCore.Qt.PenStyle.NoPen), self.handle_brush)
+            h_item.setPos(pos)
+            h_item.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, (controller, i, h_type))
+            h_item.setZValue(11)
+
+    def _update_slider_visual(self):
+        
+        current_frame = self.timeline_widget.current_frame
+        ruler = self.timeline_widget.ruler
+        if ruler.start_frame <= current_frame <= ruler.end_frame:
+            slider_x = self._frame_to_x(current_frame) 
+            slider_pen = QtGui.QPen(QtGui.QColor("#ff4747")); slider_pen.setWidth(2) 
+            rect = self.viewport().rect()
+            self.slider_item = self.scene.addLine(slider_x, 0, slider_x, rect.height(), slider_pen)
+            self.slider_item.setZValue(100) 
+        else:
+            self.slider_item = None
+    
+    
+    def fit_selected(self):
+        
+        target_keys = []
+        
+        
+        if self.selected_keys:
+            
+            for key_id in self.selected_keys:
+                
+                controller, idx = key_id
+                try: target_keys.append(controller.keys[idx])
+                except: pass
+        else:
+            
+            track_tree = self.timeline_widget.track_list_panel.track_tree
+            iterator = QtWidgets.QTreeWidgetItemIterator(track_tree)
+            while iterator.value():
+                item = iterator.value()
+                if not item.isHidden():
+                    sub_anim = item.data(0, self.timeline_widget.SUBANIM_ROLE)
+                    if sub_anim and hasattr(sub_anim, 'controller') and sub_anim.controller:
+                         if rt.isProperty(sub_anim.controller, "keys"):
+                             for k in sub_anim.controller.keys: target_keys.append(k)
+                iterator += 1
+
+        if not target_keys: return
+
+        
+        min_t, max_t = float('inf'), float('-inf')
+        min_v, max_v = float('inf'), float('-inf')
+
+        for k in target_keys:
+            t, v = float(k.time), float(k.value)
+            if t < min_t: min_t = t
+            if t > max_t: max_t = t
+            if v < min_v: min_v = v
+            if v > max_v: max_v = v
+
+        if min_t == float('inf'): return
+
+        
+        t_pad = max(5, (max_t - min_t) * 0.1) 
+        v_pad = max(10, (max_v - min_v) * 0.2) 
+
+        new_start = min_t - t_pad
+        new_end = max_t + t_pad
+        new_min_val = min_v - v_pad
+        new_max_val = max_v + v_pad
+        
+        
+        if new_start == new_end: new_start -= 10; new_end += 10
+        if new_min_val == new_max_val: new_min_val -= 10; new_max_val += 10
+
+        
+        pymxs.runtime.animationRange = pymxs.runtime.interval(int(new_start), int(new_end))
+        self.min_value = new_min_val
+        self.max_value = new_max_val
+        
+        self.timeline_widget.ruler.update_range() 
+        self._redraw_scene()
+        self.timeline_widget.value_ruler.update()
+        print(f"Focused View: Frames {int(new_start)}-{int(new_end)}, Values {int(new_min_val)}-{int(new_max_val)}")
+
     
 
     def mousePressEvent(self, event):
@@ -963,26 +1123,31 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
         
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
             
+            ruler = self.timeline_widget.ruler
+            current_frame = self.timeline_widget.current_frame
+            slider_x = self._frame_to_x(current_frame)
+            
+            slider_view_x = self.mapFromScene(QtCore.QPointF(slider_x, 0)).x()
+            
+            
+            handle_rect = QtCore.QRectF(slider_view_x - 10, 0, 20, self.height())
+            
+            
+            if handle_rect.contains(QtCore.QPointF(event.pos())):
+                self.drag_mode = 'scrub_timeline'
+                self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+                
+               
+                if self.timeline_widget.sync_timer.isActive():
+                    self.timeline_widget.sync_timer.stop()
+                
+                event.accept()
+                return 
+
+            
+            item_under_mouse = self.itemAt(event.pos())
             data = item_under_mouse.data(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE) if item_under_mouse else None
             modifiers = event.modifiers()
-            
-            
-            if data and isinstance(data, tuple) and len(data) == 3:
-                controller, index, handle_type = data
-                key_id = (controller, index)
-                
-                
-                if key_id not in self.selected_keys:
-                    if modifiers != QtCore.Qt.KeyboardModifier.ControlModifier:
-                        self.selected_keys.clear()
-                    self.selected_keys.add(key_id)
-                
-                self.drag_mode = 'move_handle'
-                self.dragging_handle_info = data # (controller, index, 'in'/'out')
-                self.drag_start_pos_scene = self.mapToScene(event.pos())
-                self._redraw_scene()
-                event.accept()
-                return
 
             
             if data and isinstance(data, tuple) and len(data) == 2:
@@ -1051,6 +1216,43 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
             
             self._last_pan_pos = current_pos
             event.accept()
+            super().mouseMoveEvent(event)
+            return
+
+
+        if self.drag_mode == 'scrub_timeline':
+            scene_pos = self.mapToScene(event.pos())
+            new_frame = self._x_to_frame(scene_pos.x())
+            new_frame_int = int(new_frame)
+            
+            pymxs.runtime.sliderTime = new_frame_int
+            self.timeline_widget.current_frame = new_frame_int            
+            self.timeline_widget.ruler.update()
+            if self.slider_item:
+                new_x = self._frame_to_x(new_frame_int)
+                line = self.slider_item.line()
+                
+                line.setLine(new_x, 0, new_x, line.y2()) 
+                self.slider_item.setLine(line)
+            else:
+                self._redraw_scene()
+            
+            event.accept()
+            return
+
+        
+        if not self.drag_mode:
+            ruler = self.timeline_widget.ruler
+            current_frame = self.timeline_widget.current_frame
+            slider_x = self._frame_to_x(current_frame)
+            slider_view_x = self.mapFromScene(QtCore.QPointF(slider_x, 0)).x()
+            
+            handle_rect = QtCore.QRectF(slider_view_x - 10, 0, 20, self.height())
+            
+            if handle_rect.contains(QtCore.QPointF(event.pos())):
+                self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+            else:
+                self.unsetCursor()
             return
             
         current_pos_scene = self.mapToScene(event.pos())
@@ -1062,17 +1264,29 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
             if self.drag_mode == 'move_key':
                 delta_scene = current_pos_scene - self.drag_start_pos_scene
                 
-                
                 for key_id, original_pos in self.dragging_key_info.items():
-                    controller, index = key_id
-                    new_pos = original_pos + delta_scene
-                    new_frame = self._x_to_frame(new_pos.x())
-                    new_value = self._y_to_value(new_pos.y())
+                    controller, index = key_id 
                     
-                    controller.keys[index].time = new_frame
-                    controller.keys[index].value = new_value
+                    
+                    new_pos = original_pos + delta_scene
+                    raw_frame = self._x_to_frame(new_pos.x())
+                    
+                    
+                    if self.is_snapping:
+                        final_frame = round(raw_frame) 
+                    else:
+                        final_frame = raw_frame
+                    
+                    try:
+                        
+                        if hasattr(controller, 'keys'):
+                             controller.keys[index].time = final_frame
+                             
+                             new_value = self._y_to_value(new_pos.y())
+                             controller.keys[index].value = new_value
+                    except: pass
                 
-                self._redraw_scene() 
+                self._redraw_scene()
                 event.accept()
                 return
                 
@@ -1129,7 +1343,15 @@ class CurveEditorWidget(QtWidgets.QGraphicsView):
             return
 
         
-        
+        if self.drag_mode == 'scrub_timeline':
+             if not self.timeline_widget.sync_timer.isActive():
+                 self.timeline_widget.sync_timer.start(50)
+             
+             self.drag_mode = None
+             self.unsetCursor()
+             self.timeline_widget._force_ui_refresh()
+             event.accept()
+             return
         
         if self.drag_mode == 'move_key' and event.button() == QtCore.Qt.MouseButton.LeftButton:
             try:
@@ -1458,6 +1680,11 @@ class KeyframeArea(QtWidgets.QGraphicsView):
         # GraphicsView ---
         self.scene = QtWidgets.QGraphicsScene(self)
         self.setScene(self.scene)
+
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame) 
+        self.setContentsMargins(0, 0, 0, 0)
+        self.viewport().setContentsMargins(0, 0, 0, 0)
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop) 
         
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         self.setStyleSheet("background-color: #2d2d2d; border: none;")
@@ -1467,8 +1694,10 @@ class KeyframeArea(QtWidgets.QGraphicsView):
         
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        
-        
+
+        self.slider_item = None
+        self.is_snapping = True
+
         self.timeline_widget = timeline_widget
         self.key_polygon = QtGui.QPolygonF([QtCore.QPointF(-4, 0), QtCore.QPointF(0, -4), QtCore.QPointF(4, 0), QtCore.QPointF(0, 4)])
         
@@ -1493,6 +1722,7 @@ class KeyframeArea(QtWidgets.QGraphicsView):
         self.key_brush = QtGui.QBrush(QtGui.QColor("#5698d4"))
         self.selected_key_brush = QtGui.QBrush(QtGui.QColor("#d4a056"))
         self.key_pen = QtGui.QPen(QtGui.QColor("#8cceff"))
+        self.slider_item = None
 
     def _redraw_scene(self):
         
@@ -1591,12 +1821,12 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                     start_frame = item.data(0, self.timeline_widget.CLIP_START_ROLE)
                     end_frame = item.data(0, self.timeline_widget.CLIP_END_ROLE)
                     
-                    #             ‌                     
+                                     
                     if start_frame is not None and end_frame is not None and ruler.pixels_per_frame > 0:
                         clip_start_x = (start_frame - ruler.start_frame) * ruler.pixels_per_frame
                         clip_end_x = (end_frame - ruler.start_frame) * ruler.pixels_per_frame
                         
-                        #                    
+                        
                         clip_rect_f = QtCore.QRectF(clip_start_x, rect.top() + 2, clip_end_x - clip_start_x, rect.height() - 4)
                         
                         #                   
@@ -1617,7 +1847,7 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                         clip_gitem.setData(self.timeline_widget.GRAPHICS_ITEM_KEY_ID_ROLE, item)
 
                 # -------------------------------------------------------
-                # (Track)->       ‌    ‌  
+                # (Track)->
                 # -------------------------------------------------------
                 else:
                     y_center = rect.center().y()
@@ -1681,10 +1911,15 @@ class KeyframeArea(QtWidgets.QGraphicsView):
 
         
         current_frame = self.timeline_widget.current_frame
-        if ruler.start_frame <= current_frame <= ruler.end_frame and ruler.pixels_per_frame > 0:
-            slider_x = (current_frame - ruler.start_frame) * ruler.pixels_per_frame
+        if ruler.start_frame <= current_frame <= ruler.end_frame and ruler.pixels_per_frame > 0:            
+            slider_x = int((current_frame - ruler.start_frame) * ruler.pixels_per_frame)
             slider_pen = QtGui.QPen(QtGui.QColor("#ff4747")); slider_pen.setWidth(2)
-            self.scene.addLine(slider_x, view_rect.top(), slider_x, view_rect.bottom(), slider_pen).setZValue(100)
+            
+            
+            self.slider_item = self.scene.addLine(slider_x, view_rect.top(), slider_x, view_rect.bottom(), slider_pen)
+            self.slider_item.setZValue(100)
+        else:
+            self.slider_item = None
     
     # ==========================================
     # === mouse event handlers ================
@@ -1718,6 +1953,17 @@ class KeyframeArea(QtWidgets.QGraphicsView):
             event.accept()
             return
 
+        if self.drag_mode == 'scrub_timeline':
+             if not self.timeline_widget.sync_timer.isActive():
+                 self.timeline_widget.sync_timer.start(50)
+                 #print("DEBUG: Sync Timer RESTARTED.")
+             
+             self.drag_mode = None
+             self.unsetCursor()
+             self.timeline_widget._force_ui_refresh()
+             event.accept()
+             return
+        
         if not self.drag_mode:
             return super().mouseReleaseEvent(event)
 
@@ -1822,7 +2068,6 @@ class KeyframeArea(QtWidgets.QGraphicsView):
         self.original_clip_ranges.clear()
         self.unsetCursor()
         self._redraw_scene()
-        self.timeline_widget._force_ui_refresh()
         super().mouseReleaseEvent(event)
         
     def wheelEvent(self, event):
@@ -1895,111 +2140,172 @@ class KeyframeArea(QtWidgets.QGraphicsView):
 
 
     def mouseMoveEvent(self, event):
+        
+        if self._is_panning:
+            current_pos = event.pos()
+            delta = current_pos - self._last_pan_pos
+            delta_x_pixels = delta.x()
             
-           
-            if self._is_panning:
-                current_pos = event.pos()
-                delta = current_pos - self._last_pan_pos
-                
-                # X-axis: Pan rt.animationRange
-                delta_x_pixels = delta.x()
+            
+            if self.timeline_widget.ruler.pixels_per_frame > 0:
                 delta_frames = delta_x_pixels / self.timeline_widget.ruler.pixels_per_frame
                 new_start = rt.animationRange.start - delta_frames
                 new_end = rt.animationRange.end - delta_frames
                 rt.animationRange = rt.interval(int(new_start), int(new_end))
 
-                # Y-axis: Pan
-                delta_y = delta.y()
-                
-                self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta_y) 
-                
-                self._last_pan_pos = current_pos
-                event.accept()
-                return
+            delta_y = delta.y()
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta_y) 
+            self._last_pan_pos = current_pos
+            event.accept()
+            return
 
-            if not self.drag_mode: 
-                return super().mouseMoveEvent(event)
+        
+        if self.drag_mode == 'scrub_timeline':
+            
+            scene_pos = self.mapToScene(event.pos())
+            new_frame = self._x_to_frame(scene_pos.x())
+            new_frame_int = int(new_frame)
+
+            
+            pymxs.runtime.sliderTime = new_frame_int
+            self.timeline_widget.current_frame = new_frame_int
             
             
+            self.timeline_widget.ruler.update()
+
             
-            
-            if self.drag_mode == 'marquee_select' and self.marquee_rect_item:
-                current_pos_scene = self.mapToScene(event.pos())
-                rect = QtCore.QRectF(self.drag_start_pos_scene, current_pos_scene).normalized()
-                self.marquee_rect_item.setRect(rect)
-                event.accept()
-                return
+            if self.slider_item:
+                ruler = self.timeline_widget.ruler
+                new_x = int((new_frame_int - ruler.start_frame) * ruler.pixels_per_frame)
                 
+                
+                line = self.slider_item.line()
+                
+                line.setLine(new_x, line.y1(), new_x, line.y2())
+                self.slider_item.setLine(line)
+            else:
+                
+                self._redraw_scene()
+            
+            
+            #print(f"Scrubbing: Target={new_frame_int} | MaxIsNow={pymxs.runtime.sliderTime}")
+
+            #self.timeline_widget.ruler.update()
+            #self._redraw_scene() 
+            event.accept()
+            return
+
+        
+        if self.drag_mode == 'marquee_select':
+            current_pos_scene = self.mapToScene(event.pos())
+            if self.marquee_rect_item and self.drag_start_pos_scene:
+                 rect = QtCore.QRectF(self.drag_start_pos_scene, current_pos_scene).normalized()
+                 self.marquee_rect_item.setRect(rect)
+            event.accept()
+            return
+
+        
+        if not self.drag_mode:
             ruler = self.timeline_widget.ruler
-            if ruler.pixels_per_frame <= 0: return
-            delta_frames = round((event.pos().x() - self.drag_start_pos.x()) / ruler.pixels_per_frame)
+            current_frame = self.timeline_widget.current_frame
+            slider_scene_x = (current_frame - ruler.start_frame) * ruler.pixels_per_frame
+            slider_view_x = self.mapFromScene(QtCore.QPointF(slider_scene_x, 0)).x()
             
-            if self.drag_mode == 'move_mixer_clip':
-                for item, (orig_start, orig_end) in self.original_clip_ranges.items():
-                    duration = orig_end - orig_start
-                    new_start = orig_start + delta_frames
-                    item.setText(3, str(new_start))
-                    item.setText(4, str(new_start + duration))
             
-            elif self.drag_mode == 'move_key':
-                is_cache_enabled = self.timeline_widget.track_list_panel.cache_mode_btn.isChecked()
-                for key_id, original_time in self.original_key_times.items():
-                    p_clip_or_controller, track_path, key_index = key_id
-                    new_time = original_time + delta_frames
-                    if is_cache_enabled:
+            handle_rect = QtCore.QRectF(slider_view_x - 10, 0, 20, self.height())
+            
+            if handle_rect.contains(QtCore.QPointF(event.pos())):
+                self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+            else:
+                self.unsetCursor()          
+            
+            return 
+
+        
+        if self.drag_start_pos is None:
+            return
+
+        ruler = self.timeline_widget.ruler
+        if ruler.pixels_per_frame <= 0: return
+
+        
+        #delta_frames = round((event.pos().x() - self.drag_start_pos.x()) / ruler.pixels_per_frame)
+        raw_delta = (event.pos().x() - self.drag_start_pos.x()) / ruler.pixels_per_frame
+        
+        if self.is_snapping:
+            delta_frames = round(raw_delta) 
+        else:
+            delta_frames = raw_delta
+        
+        
+        if self.drag_mode == 'move_mixer_clip':
+             for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                duration = orig_end - orig_start
+                new_start = orig_start + delta_frames
+                item.setText(3, str(new_start))
+                item.setText(4, str(new_start + duration))
+        
+        elif self.drag_mode == 'move_key':
+            is_cache_enabled = self.timeline_widget.track_list_panel.cache_mode_btn.isChecked()
+            for key_id, original_time in self.original_key_times.items():
+                p_clip_or_controller, track_path, key_index = key_id
+                new_time = original_time + delta_frames
+                if is_cache_enabled:
+                    try:
                         anim_map = p_clip_or_controller.data(0, self.timeline_widget.CLIP_DATA_ROLE)
                         anim_map['tracks'][track_path]['keys'][key_index]['time'] = new_time
-                    else:
-                        try: p_clip_or_controller.keys[key_index].time = new_time
-                        except Exception: pass
-            
-            elif self.drag_mode == 'move':
-                for item, (orig_start, orig_end) in self.original_clip_ranges.items():
-                    item.setData(0, self.timeline_widget.CLIP_START_ROLE, orig_start + delta_frames)
-                    item.setData(0, self.timeline_widget.CLIP_END_ROLE, orig_end + delta_frames)
-                try:
-                    for (controller, _, index), original_time in self.original_key_times.items():
-                        controller.keys[index].time = original_time + delta_frames
-                except Exception as e: print(f"Error moving keys: {e}")
+                    except: pass
+                else:
+                    try: p_clip_or_controller.keys[key_index].time = new_time
+                    except Exception: pass
+        
+        elif self.drag_mode == 'move':
+            for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                item.setData(0, self.timeline_widget.CLIP_START_ROLE, orig_start + delta_frames)
+                item.setData(0, self.timeline_widget.CLIP_END_ROLE, orig_end + delta_frames)
+            try:
+                for (controller, _, index), original_time in self.original_key_times.items():
+                    controller.keys[index].time = original_time + delta_frames
+            except Exception as e: pass
 
-            elif self.drag_mode == 'trim_start':
-                for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+        elif self.drag_mode == 'trim_start':
+            for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                new_start = min(orig_start + delta_frames, orig_end - 1)
+                item.setData(0, self.timeline_widget.CLIP_START_ROLE, new_start)
+        
+        elif self.drag_mode == 'trim_end':
+            for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                new_end = max(orig_end + delta_frames, orig_start + 1)
+                item.setData(0, self.timeline_widget.CLIP_END_ROLE, new_end)
+        
+        elif self.drag_mode in ['scale_start', 'scale_end']:
+            for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                original_duration = orig_end - orig_start
+                if original_duration <= 0: continue
+                
+                if self.drag_mode == 'scale_start':
                     new_start = min(orig_start + delta_frames, orig_end - 1)
                     item.setData(0, self.timeline_widget.CLIP_START_ROLE, new_start)
-            
-            elif self.drag_mode == 'trim_end':
-                for item, (orig_start, orig_end) in self.original_clip_ranges.items():
+                    pivot_frame = orig_end
+                else: 
                     new_end = max(orig_end + delta_frames, orig_start + 1)
                     item.setData(0, self.timeline_widget.CLIP_END_ROLE, new_end)
-            
-            elif self.drag_mode in ['scale_start', 'scale_end']:
-                for item, (orig_start, orig_end) in self.original_clip_ranges.items():
-                    original_duration = orig_end - orig_start
-                    if original_duration <= 0: continue
-                    
-                    if self.drag_mode == 'scale_start':
-                        new_start = min(orig_start + delta_frames, orig_end - 1)
-                        item.setData(0, self.timeline_widget.CLIP_START_ROLE, new_start)
-                        pivot_frame = orig_end
-                    else: 
-                        new_end = max(orig_end + delta_frames, orig_start + 1)
-                        item.setData(0, self.timeline_widget.CLIP_END_ROLE, new_end)
-                        pivot_frame = orig_start
-                    
-                    new_duration = item.data(0, self.timeline_widget.CLIP_END_ROLE) - item.data(0, self.timeline_widget.CLIP_START_ROLE)
-                    if original_duration == 0: continue
-                    scale_factor = new_duration / original_duration
-                    
-                    for (controller, _, index), original_time in self.original_key_times.items():
-                        try:
-                            distance_from_pivot = original_time - pivot_frame
-                            new_time = pivot_frame + (distance_from_pivot * scale_factor)
-                            controller.keys[index].time = new_time
-                        except Exception as e:
-                            print(f"Error scaling key: {e}")
-            
-            self._redraw_scene()
-            event.accept()
+                    pivot_frame = orig_start
+                
+                new_duration = item.data(0, self.timeline_widget.CLIP_END_ROLE) - item.data(0, self.timeline_widget.CLIP_START_ROLE)
+                if original_duration == 0: continue
+                scale_factor = new_duration / original_duration
+                
+                for (controller, _, index), original_time in self.original_key_times.items():
+                    try:
+                        distance_from_pivot = original_time - pivot_frame
+                        new_time = pivot_frame + (distance_from_pivot * scale_factor)
+                        controller.keys[index].time = new_time
+                    except Exception as e: pass
+
+        self._redraw_scene()
+        event.accept()
+        super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):          
             
@@ -2011,9 +2317,32 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                 event.accept()
                 return
                 
-            if event.button() != QtCore.Qt.MouseButton.LeftButton:
-                super().mousePressEvent(event)
-                return
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                ruler = self.timeline_widget.ruler
+                current_frame = self.timeline_widget.current_frame
+                
+                
+                slider_scene_x = (current_frame - ruler.start_frame) * ruler.pixels_per_frame
+                slider_view_x = self.mapFromScene(QtCore.QPointF(slider_scene_x, 0)).x()
+                handle_rect = QtCore.QRectF(slider_view_x - 10, 0, 20, self.height())
+                
+                
+                if handle_rect.contains(QtCore.QPointF(event.pos())):
+                    self.drag_mode = 'scrub_timeline'
+                    self.setCursor(QtCore.Qt.CursorShape.SizeHorCursor)
+                    
+                    
+                    if self.timeline_widget.sync_timer.isActive():
+                        self.timeline_widget.sync_timer.stop()
+                        #print("DEBUG: Sync Timer STOPPED forcefully.")
+                    
+                    event.accept()
+                    return 
+
+                
+                self.drag_start_pos = event.pos()
+                
+            super().mousePressEvent(event)
             
             item_under_cursor_tree = self._item_at(event.pos().y())
             x_pos_scene = self.mapToScene(event.pos()).x()
@@ -2144,6 +2473,7 @@ class KeyframeArea(QtWidgets.QGraphicsView):
             self.marquee_rect_item.setZValue(99)
             
             self._redraw_scene()
+            super().mousePressEvent(event)
 
 
     # ==========================================
@@ -2239,12 +2569,75 @@ class KeyframeArea(QtWidgets.QGraphicsView):
                     rt.selectKeys(controller, indices)
         except Exception: pass
 
+    def fit_selected(self):
+        
+        if not self.selected_keys: return
+
+        min_t, max_t = float('inf'), float('-inf')
+        
+        
+        is_cache_enabled = self.timeline_widget.track_list_panel.cache_mode_btn.isChecked()
+        
+        found_any = False
+        for key_id in self.selected_keys:
+            
+            try:
+                obj, track_path, idx = key_id
+                time_val = 0
+                
+                if is_cache_enabled:
+                    anim_map = obj.data(0, self.timeline_widget.CLIP_DATA_ROLE)
+                    time_val = float(anim_map['tracks'][track_path]['keys'][idx]['time'])
+                else:
+                    
+                    time_val = float(obj.keys[idx].time)
+                
+                if time_val < min_t: min_t = time_val
+                if time_val > max_t: max_t = time_val
+                found_any = True
+            except Exception: pass
+
+        if not found_any or min_t == float('inf'): return
+
+        
+        margin = max(5, (max_t - min_t) * 0.2)
+        
+        
+        if min_t == max_t:
+            margin = 10
+
+        new_start = int(min_t - margin)
+        new_end = int(max_t + margin)
+
+        
+        pymxs.runtime.animationRange = pymxs.runtime.interval(new_start, new_end)
+        
+        
+        self.timeline_widget.ruler.update_range()
+        self._redraw_scene()
+        print(f"Focused Timeline: {new_start} to {new_end}")
+
+    #def keyPressEvent(self, event):
+        
+        #if event.key() == QtCore.Qt.Key.Key_Delete: 
+            
+            #self.delete_selected_keys()
+        #else: 
+            #super().keyPressEvent(event)
+
     def keyPressEvent(self, event):
         
-        if event.key() == QtCore.Qt.Key.Key_Delete: 
+        if event.key() == QtCore.Qt.Key.Key_F:
+            self.fit_selected() 
+            event.accept()
             
-            self.delete_selected_keys()
-        else: 
+        
+        elif event.key() == QtCore.Qt.Key.Key_Delete: 
+            self.delete_selected_keys() 
+            event.accept()
+            
+        
+        else:
             super().keyPressEvent(event)
             
     
@@ -2637,7 +3030,11 @@ class MyTimelineWidget(QtWidgets.QWidget):
         self.icon_linear = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'Linear.png').replace('\\', '/'))
         self.icon_bezier = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'Bezier.png').replace('\\', '/'))
         self.icon_smooth = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'Smooth.png').replace('\\', '/'))
+
+        self.icon_snap = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'SnapFrames.png').replace('\\', '/'))
         
+        
+
         self.icon_track_transform = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'Transform.png').replace('\\', '/'))
         self.icon_track_position = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'position.png').replace('\\', '/'))
         self.icon_track_rotation = QtGui.QIcon(os.path.join(SCRIPT_PATH, 'icons', 'rotate.png').replace('\\', '/'))
@@ -2749,6 +3146,11 @@ class MyTimelineWidget(QtWidgets.QWidget):
         self.action_bezier = QtGui.QAction(self.icon_bezier, "Bezier", self)
         self.action_smooth = QtGui.QAction(self.icon_smooth, "Smooth", self)
         
+        self.action_snap = QtGui.QAction(self.icon_snap, "Snap to Frames", self)
+        self.action_snap.setCheckable(True)
+        self.action_snap.setChecked(True) 
+        self.action_snap.setToolTip("Toggle Snapping (Magnet)")
+        self.action_snap.triggered.connect(self.toggle_snapping)
         
         tool_button_style = """
             QToolButton { 
@@ -2780,12 +3182,16 @@ class MyTimelineWidget(QtWidgets.QWidget):
         tool_group_layout.setContentsMargins(2, 2, 2, 2); tool_group_layout.setSpacing(0)
         tool_group_widget.setStyleSheet(group_style)
 
-        
+        # === (Trim, Split) ===
         trim_btn = QtWidgets.QToolButton(); trim_btn.setDefaultAction(self.action_trim_clip); trim_btn.setStyleSheet(tool_button_style)
         split_btn = QtWidgets.QToolButton(); split_btn.setDefaultAction(self.action_split_clip); split_btn.setStyleSheet(tool_button_style)
+        # === (Snap) ===
+        snap_btn = QtWidgets.QToolButton();snap_btn.setDefaultAction(self.action_snap);snap_btn.setStyleSheet(tool_button_style)
+
 
         tool_group_layout.addWidget(trim_btn)
         tool_group_layout.addWidget(split_btn)
+        tool_group_layout.addWidget(snap_btn)
         
         right_toolbar.addWidget(tool_group_widget)
         right_toolbar.addSeparator()
@@ -2818,6 +3224,7 @@ class MyTimelineWidget(QtWidgets.QWidget):
         tangent_group_widget.setStyleSheet(group_style)
         
         
+
         curve_btn = QtWidgets.QToolButton(); curve_btn.setDefaultAction(self.action_curve); curve_btn.setStyleSheet(tool_button_style)
         linear_btn = QtWidgets.QToolButton(); linear_btn.setDefaultAction(self.action_linear); linear_btn.setStyleSheet(tool_button_style)
         bezier_btn = QtWidgets.QToolButton(); bezier_btn.setDefaultAction(self.action_bezier); bezier_btn.setStyleSheet(tool_button_style)
@@ -2827,6 +3234,7 @@ class MyTimelineWidget(QtWidgets.QWidget):
         tangent_group_layout.addWidget(linear_btn)
         tangent_group_layout.addWidget(bezier_btn)
         tangent_group_layout.addWidget(smooth_btn)
+
         
         
         
@@ -2861,6 +3269,7 @@ class MyTimelineWidget(QtWidgets.QWidget):
         self.editor_scroll_area = QtWidgets.QScrollArea()
         self.editor_scroll_area.setWidget(self.editor_container)
         self.editor_scroll_area.setWidgetResizable(True)
+        self.editor_scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.editor_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.editor_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
@@ -3122,6 +3531,11 @@ class MyTimelineWidget(QtWidgets.QWidget):
         """
         self.logic.handle_context_menu_request(position)
 
+    def toggle_snapping(self):
+        state = self.action_snap.isChecked()
+        self.keyframe_area.is_snapping = state
+        self.curve_editor.is_snapping = state
+        print(f"🧲 Snapping set to: {state}")
 
     #=============================
     # End of Connections and Callbacks TIMELINE UI
@@ -4522,7 +4936,7 @@ class MixerTreeWidget(QtWidgets.QTreeWidget):
         event.setDropAction(QtCore.Qt.DropAction.MoveAction)
         super().dropEvent(event)
         
-        #              ‌   (        ‌  )               
+           
         for i in range(self.topLevelItemCount()):
             track_item = self.topLevelItem(i)
             
@@ -4646,9 +5060,7 @@ class MotionMixerPanel(QtWidgets.QWidget):
         file_paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Import Animation Clip(s)", "", "Animation Clips (*.clip)")
         if not file_paths: return
 
-        # ---                           ---
-        #               ‌                                                         ‌     .
-
+        
         for file_path in file_paths:
             try:
                 with open(file_path, 'r') as f: clip_data = json.load(f)
@@ -4670,9 +5082,7 @@ class MotionMixerPanel(QtWidgets.QWidget):
                 self.track_tree.setItemWidget(track_item, 1, blend_combo)
                 track_item.setData(1, self.timeline_widget.BLEND_MODE_ROLE, "Override")
 
-                # 2.           (              0                            ‌     )
-                #                                    0                  ‌             .
-                #                      0           (     ‌                          )
+                
                 start_time = 0
                 end_time = start_time + int(duration)
                 
@@ -4682,20 +5092,11 @@ class MotionMixerPanel(QtWidgets.QWidget):
                 track_item.addChild(clip_item)
                 track_item.setExpanded(True)
 
-                # --- 3. MODE COLUMN (HIDDEN) ---
-                #         ComboBox    ‌      (                        )  
-                #                  ‌        Bake        .
-                
-                # mode_combo = QtWidgets.QComboBox(self.track_tree)
-                # mode_combo.addItems(["Absolute", "Relative"])
-                # ...
-                # self.track_tree.setItemWidget(clip_item, 2, mode_combo) 
-                
-                #                    ‌    Absolute   ‌      
+                 
                 clip_item.setData(2, self.timeline_widget.CLIP_MODE_ROLE, "Absolute")
 
 
-                # --- 4. LOOP COLUMN (ACTIVE) ---
+                
                 loop_combo = QtWidgets.QComboBox(self.track_tree)
                 loop_combo.addItems(["Once", "Constant", "Cycle", "PingPong", "Linear", "Relative"])
                 loop_combo.setCurrentText("Once")
