@@ -80,6 +80,17 @@ Your feedback is invaluable in making TimelinePro better! If you find a bug or h
     * Select `launch_timeline.py` File, click `Open`.
     * Now, you can see `TimelinePro` under the original Timeline
 
+or 
+
+## 📦 Installation
+
+Installing the plugin is quick and requires no manual setup in 3ds Max.
+
+1. **Unzip** the downloaded package.
+2. **Copy** the `.bundle` folder to the Autodesk Application Plugins directory:
+   ```text
+   C:\ProgramData\Autodesk\ApplicationPlugins
+
 ***
 
 ### 📖 How to Use (Quick Start)
