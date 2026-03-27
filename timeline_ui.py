@@ -348,7 +348,7 @@ class SettingsDialog(QtWidgets.QDialog):
         
         about_text = f"""
         <h3>Timeline Pro</h3>
-        <p><b>Version:</b> 0.0.4</p>
+        <p><b>Version:</b> 0.0.5</p>
         <p>A professional non-linear animation timeline for 3ds Max.</p>
         <p>Developed by: <b>Iman shirani</b></p>
         <p>&copy; 2025</p>
