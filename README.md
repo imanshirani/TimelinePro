@@ -1,6 +1,10 @@
 # TIMELINE Pro (Open Beta) 🚀
 for Autodesk 3ds Max 2025+
 
+> **Released product:** The production version of Timeline Pro is available at  
+> [myartsbox.us/timeline-pro](https://myartsbox.us/timeline-pro/)  
+> This repository is the earlier open-beta version for 3ds Max.
+
 ### Introduction
 
 **TimelinePro** is an advanced, non-linear timeline editor for 3ds Max, designed to provide professional-grade control over animation. Inspired by video editing software, TimelinePro allows artists to work with animation clips as layers, making it easier to experiment, reuse animations, and build complex sequences.
